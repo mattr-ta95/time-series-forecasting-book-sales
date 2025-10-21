@@ -766,44 +766,46 @@ sequence_data = create_input_sequences_lstm(lookback, forecast, sequence_data=al
 alchemist_train_input_lstm = np.array(sequence_data["input_sequences"])
 alchemist_train_output_lstm = np.array(sequence_data["output_sequences"])
 
-# Scale the data
-scaler = StandardScaler()
-alchemist_train_input_lstm = scaler.fit_transform(alchemist_train_input_lstm.reshape(-1, 1)).reshape(alchemist_train_input_lstm.shape)
-scaled_output = scaler.fit_transform(alchemist_train_output_lstm.reshape(-1, 1)).reshape(alchemist_train_output_lstm.shape)
+# FIXED: Use consistent scaling with same scaler for input and output
+scaler_alchemist = StandardScaler()
+alchemist_train_input_lstm_scaled = scaler_alchemist.fit_transform(alchemist_train_input_lstm.reshape(-1, 1)).reshape(alchemist_train_input_lstm.shape)
+scaled_output = scaler_alchemist.transform(alchemist_train_output_lstm.reshape(-1, 1)).reshape(alchemist_train_output_lstm.shape)
 
 lstm_model = create_lstm_model(nodes, lookback, forecast)
 # Train the model on the Alchemist
-alchemist_predictor = lstm_model.fit(alchemist_train_input_lstm, scaled_output, epochs=50, batch_size=64, validation_split=0.2)
+alchemist_predictor = lstm_model.fit(alchemist_train_input_lstm_scaled, scaled_output, epochs=50, batch_size=64, validation_split=0.2)
 
-# Make predictions on the training data
-alchemist_train_predictions = lstm_model.predict(alchemist_train_input_lstm)
-alchemist_train_predictions = alchemist_train_predictions.reshape(-1,1)
+# FIXED: Create proper test sequences and predict on TEST data, not training
+sequence_data_test = create_input_sequences_lstm(lookback, forecast, sequence_data=np.concatenate([alchemist_train_lstm, alchemist_test_lstm]))
+alchemist_test_input_lstm = np.array(sequence_data_test["input_sequences"])[-1:]  # Last sequence for forecasting
+alchemist_test_input_lstm_scaled = scaler_alchemist.transform(alchemist_test_input_lstm.reshape(-1, 1)).reshape(alchemist_test_input_lstm.shape)
 
-# Reshape the output
-alchemist_train_output_lstm = alchemist_train_output_lstm.reshape(-1,1)
+# Make predictions on the TEST data
+alchemist_test_predictions = lstm_model.predict(alchemist_test_input_lstm_scaled)
+alchemist_test_predictions = alchemist_test_predictions.reshape(-1, 1)
 
 # Invert the scaling on predictions
-alchemist_train_predictions = scaler.inverse_transform(alchemist_train_predictions)
+alchemist_test_predictions = scaler_alchemist.inverse_transform(alchemist_test_predictions)
 
-# Compare the last predicted value with the last actual value in the training set
-print("Train Predictions:", alchemist_train_predictions[-1])
-print("Train Actual:", alchemist_train_output_lstm[-1])
+print("LSTM Test Predictions (first 5):", alchemist_test_predictions[:5].flatten())
+print("LSTM Test Actual (first 5):", alchemist_test_ml.values[:5])
 
-# Convert to a Series with the correct index
-alchemist_predicted_lstm = pd.Series(alchemist_train_predictions[-32:].flatten(), index=alchemist_train_ml.index[-32:])
+# Convert to a Series with the correct TEST index
+alchemist_predicted_lstm = pd.Series(alchemist_test_predictions.flatten()[:len(alchemist_test_ml)], index=alchemist_test_ml.index)
 
 plt.figure(figsize=(12, 6))
-plt.plot(alchemist_train_ml.index[-32:].to_timestamp(), alchemist_train_ml[-32:], label='Alchemist Training Data')
-plt.plot(alchemist_train_ml.index[-32:].to_timestamp(), alchemist_predicted_lstm, label='Alchemist Predicted Values')
+plt.plot(alchemist_test_ml.index.to_timestamp(), alchemist_test_ml, label='Alchemist Test Data (Actual)')
+plt.plot(alchemist_predicted_lstm.index.to_timestamp(), alchemist_predicted_lstm, label='Alchemist LSTM Forecast')
 plt.legend()
+plt.title('LSTM Forecast vs Actual - The Alchemist (FIXED)')
 plt.show()
 
-# MAE and MAPE values
-mae_alchemist = mean_absolute_error(alchemist_train_ml[-32:], alchemist_predicted_lstm)
-print("MAE:", mae_alchemist)
+# MAE and MAPE values - NOW ON TEST DATA
+mae_alchemist = mean_absolute_error(alchemist_test_ml[:len(alchemist_predicted_lstm)], alchemist_predicted_lstm)
+print("LSTM MAE (Alchemist):", mae_alchemist)
 
-mape_alchemist = mean_absolute_percentage_error(alchemist_train_ml[-32:], alchemist_predicted_lstm)
-print("MAPE:", mape_alchemist)
+mape_alchemist = mean_absolute_percentage_error(alchemist_test_ml[:len(alchemist_predicted_lstm)], alchemist_predicted_lstm)
+print("LSTM MAPE (Alchemist):", mape_alchemist)
 
 # Create input sequences with lookback for The Very Hungry Caterpillar
 sequence_data = create_input_sequences_lstm(lookback, forecast, sequence_data=caterpillar_train_lstm)
@@ -813,39 +815,48 @@ caterpillar_train_output_lstm = np.array(sequence_data["output_sequences"])
 # Reshape the input to be [samples, time steps, features]
 caterpillar_train_input_lstm = caterpillar_train_input_lstm.reshape((caterpillar_train_input_lstm.shape[0], caterpillar_train_input_lstm.shape[1], 1))
 
+# FIXED: Use separate scaler for caterpillar (already scaled earlier at line 724)
+scaler_caterpillar = StandardScaler()
+caterpillar_train_input_lstm_scaled = scaler_caterpillar.fit_transform(caterpillar_train_input_lstm.reshape(-1, 1)).reshape(caterpillar_train_input_lstm.shape)
+caterpillar_train_output_lstm_scaled = scaler_caterpillar.transform(caterpillar_train_output_lstm.reshape(-1, 1)).reshape(caterpillar_train_output_lstm.shape)
+
 lstm_model = create_lstm_model(80, lookback, forecast)
 # Train the model on The Very Hungry Caterpillar
-caterpillar_predictor = lstm_model.fit(caterpillar_train_input_lstm, caterpillar_train_output_lstm, epochs=60, batch_size=64, validation_split=0.2)
+caterpillar_predictor = lstm_model.fit(caterpillar_train_input_lstm_scaled, caterpillar_train_output_lstm_scaled, epochs=60, batch_size=64, validation_split=0.2)
 
-# Make predictions on the training data
-caterpillar_train_predictions = lstm_model.predict(caterpillar_train_input_lstm)
-caterpillar_train_predictions = caterpillar_train_predictions.reshape(-1,1)
+# FIXED: Create test sequences and predict on TEST data
+sequence_data_test_cat = create_input_sequences_lstm(lookback, forecast, sequence_data=np.concatenate([caterpillar_train_lstm.flatten(), caterpillar_test_lstm.flatten()]))
+caterpillar_test_input_lstm = np.array(sequence_data_test_cat["input_sequences"])[-1:]
+caterpillar_test_input_lstm = caterpillar_test_input_lstm.reshape((caterpillar_test_input_lstm.shape[0], caterpillar_test_input_lstm.shape[1], 1))
+caterpillar_test_input_lstm_scaled = scaler_caterpillar.transform(caterpillar_test_input_lstm.reshape(-1, 1)).reshape(caterpillar_test_input_lstm.shape)
 
-# Invert the scaling on both predictions and target values
-caterpillar_train_predictions = scaler.inverse_transform(caterpillar_train_predictions)
-cat_train_original_scale = scaler.inverse_transform(caterpillar_train_output_lstm.reshape(-1,1))
+# Make predictions on the TEST data
+caterpillar_test_predictions = lstm_model.predict(caterpillar_test_input_lstm_scaled)
+caterpillar_test_predictions = caterpillar_test_predictions.reshape(-1, 1)
 
-# Compare the last predicted value with the last actual value in the training set
-print("Train Predictions:", caterpillar_train_predictions[-1])
-print("Train Actual:", cat_train_original_scale[-1])
+# Invert the scaling on predictions
+caterpillar_test_predictions = scaler_caterpillar.inverse_transform(caterpillar_test_predictions)
 
-# Plot fitted data against training data
-# Convert to a Series with the correct index
-caterpillar_predictions_lstm = pd.Series(caterpillar_train_predictions[-32:].flatten(), index=caterpillar_train_ml.index[-32:])
+print("LSTM Test Predictions (first 5):", caterpillar_test_predictions[:5].flatten())
+print("LSTM Test Actual (first 5):", caterpillar_test_ml.values[:5])
+
+# Plot forecast against TEST data
+caterpillar_predictions_lstm = pd.Series(caterpillar_test_predictions.flatten()[:len(caterpillar_test_ml)], index=caterpillar_test_ml.index)
 
 # Plot
 plt.figure(figsize=(12, 6))
-plt.plot(caterpillar_train_ml.index[-32:].to_timestamp(), caterpillar_train_ml[-32:], label='Caterpillar Training Data')
-plt.plot(caterpillar_train_ml.index[-32:].to_timestamp(), caterpillar_predictions_lstm[-32:], label='Caterpillar Fitted Values')
+plt.plot(caterpillar_test_ml.index.to_timestamp(), caterpillar_test_ml, label='Caterpillar Test Data (Actual)')
+plt.plot(caterpillar_predictions_lstm.index.to_timestamp(), caterpillar_predictions_lstm, label='Caterpillar LSTM Forecast')
 plt.legend()
+plt.title('LSTM Forecast vs Actual - The Very Hungry Caterpillar (FIXED)')
 plt.show()
 
-# MAE and MAPE values
-mae_caterpillar = mean_absolute_error(caterpillar_train_ml[-32:], caterpillar_predictions_lstm[-32:])
-print("MAE:", mae_caterpillar)
+# MAE and MAPE values - NOW ON TEST DATA
+mae_caterpillar = mean_absolute_error(caterpillar_test_ml[:len(caterpillar_predictions_lstm)], caterpillar_predictions_lstm)
+print("LSTM MAE (Caterpillar):", mae_caterpillar)
 
-mape_caterpillar = mean_absolute_percentage_error(caterpillar_train_ml[-32:], caterpillar_predictions_lstm[-32:])
-print("MAPE:", mape_caterpillar)
+mape_caterpillar = mean_absolute_percentage_error(caterpillar_test_ml[:len(caterpillar_predictions_lstm)], caterpillar_predictions_lstm)
+print("LSTM MAPE (Caterpillar):", mape_caterpillar)
 
 # Optuna-based LSTM hyperparameter tuning
 def build_lstm_model_with_params(units: int, dropout_rate: float) -> Sequential:
