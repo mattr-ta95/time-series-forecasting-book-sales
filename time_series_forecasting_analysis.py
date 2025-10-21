@@ -84,9 +84,60 @@ from sklearn.preprocessing import MinMaxScaler
 
 from keras.models import Sequential
 from keras.layers import Dense, LSTM, Dropout
+from keras.callbacks import EarlyStopping  # PHASE 2: Add early stopping
 
 # Hyperparameter tuning
 import optuna
+
+# PHASE 2: Cross-validation function for time series
+def time_series_cv_score(model_func, X, y, n_splits=3):
+    """
+    Perform time series cross-validation with expanding window.
+
+    Args:
+        model_func: Function that creates and returns a compiled model
+        X: Input sequences
+        y: Output sequences
+        n_splits: Number of CV splits
+
+    Returns:
+        List of validation MAE scores for each split
+    """
+    from sklearn.metrics import mean_absolute_error
+
+    n_samples = len(X)
+    test_size = n_samples // (n_splits + 1)
+    scores = []
+
+    print(f"  Running {n_splits}-fold time series CV...")
+
+    for i in range(n_splits):
+        # Expanding window: train size increases with each fold
+        train_end = test_size * (i + 2)
+        test_start = test_size * (i + 1)
+        test_end = train_end
+
+        X_train_cv = X[:test_start]
+        y_train_cv = y[:test_start]
+        X_val_cv = X[test_start:test_end]
+        y_val_cv = y[test_start:test_end]
+
+        if len(X_val_cv) == 0:
+            continue
+
+        # Train model
+        model = model_func()
+        early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True, verbose=0)
+        model.fit(X_train_cv, y_train_cv, epochs=50, batch_size=32,
+                 validation_split=0.2, callbacks=[early_stop], verbose=0)
+
+        # Evaluate
+        pred = model.predict(X_val_cv, verbose=0)
+        mae = mean_absolute_error(y_val_cv.flatten(), pred.flatten())
+        scores.append(mae)
+        print(f"    Fold {i+1}: MAE = {mae:.2f}")
+
+    return scores
 
 # Load datasets from local data directory
 import os
@@ -737,19 +788,18 @@ def create_input_sequences_lstm(lookback, forecast, sequence_data):
 
   return { "input_sequences": input_sequences,"output_sequences": output_sequences }
 
-# Create an LSTM model for both books
+# PHASE 2: Simplified LSTM model - reduced from 5 layers to 2, nodes from 80 to 50
 def create_lstm_model(nodes, lookback, forecast):
+    """
+    Simplified LSTM architecture to reduce overfitting.
+    Previous: 5 layers x 80 units = ~200K parameters
+    Current: 2 layers x 50 units = ~50K parameters
+    """
     model = Sequential()
     model.add(LSTM(units=nodes, input_shape=(lookback, 1), return_sequences=True))
-    model.add(Dropout(0.2))
-    model.add(LSTM(units=nodes, return_sequences=True))
-    model.add(Dropout(0.2))
-    model.add(LSTM(units=nodes, return_sequences=True))
-    model.add(Dropout(0.2))
-    model.add(LSTM(units=nodes,return_sequences=True))
-    model.add(Dropout(0.2))
+    model.add(Dropout(0.3))  # Increased dropout from 0.2 to 0.3
     model.add(LSTM(units=nodes))
-    model.add(Dropout(0.2))
+    model.add(Dropout(0.3))
     model.add(Dense(forecast))
     model.compile(loss='mse', optimizer='adam')
     return model
@@ -757,7 +807,7 @@ def create_lstm_model(nodes, lookback, forecast):
 # Create the model summary
 lookback = 52
 forecast = 32
-nodes = 80
+nodes = 50  # PHASE 2: Reduced from 80 to 50
 lstm_model = create_lstm_model(nodes, lookback, forecast)
 lstm_model.summary()
 
@@ -772,8 +822,20 @@ alchemist_train_input_lstm_scaled = scaler_alchemist.fit_transform(alchemist_tra
 scaled_output = scaler_alchemist.transform(alchemist_train_output_lstm.reshape(-1, 1)).reshape(alchemist_train_output_lstm.shape)
 
 lstm_model = create_lstm_model(nodes, lookback, forecast)
+
+# PHASE 2: Add early stopping to prevent overfitting
+early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1)
+
 # Train the model on the Alchemist
-alchemist_predictor = lstm_model.fit(alchemist_train_input_lstm_scaled, scaled_output, epochs=50, batch_size=64, validation_split=0.2)
+alchemist_predictor = lstm_model.fit(
+    alchemist_train_input_lstm_scaled,
+    scaled_output,
+    epochs=100,  # PHASE 2: Increased max epochs, but early stopping will prevent overfitting
+    batch_size=64,
+    validation_split=0.2,
+    callbacks=[early_stop],  # PHASE 2: Add early stopping
+    verbose=0
+)
 
 # FIXED: Create proper test sequences and predict on TEST data, not training
 sequence_data_test = create_input_sequences_lstm(lookback, forecast, sequence_data=np.concatenate([alchemist_train_lstm, alchemist_test_lstm]))
@@ -807,6 +869,15 @@ print("LSTM MAE (Alchemist):", mae_alchemist)
 mape_alchemist = mean_absolute_percentage_error(alchemist_test_ml[:len(alchemist_predicted_lstm)], alchemist_predicted_lstm)
 print("LSTM MAPE (Alchemist):", mape_alchemist)
 
+# PHASE 2: Cross-validation to assess model stability
+print("\nPHASE 2: Cross-validation for model stability assessment")
+def create_cv_model():
+    return create_lstm_model(nodes=50, lookback=52, forecast=32)
+
+cv_scores = time_series_cv_score(create_cv_model, alchemist_train_input_lstm_scaled, scaled_output, n_splits=3)
+print(f"  CV MAE scores: {cv_scores}")
+print(f"  Mean CV MAE: {np.mean(cv_scores):.2f} (+/- {np.std(cv_scores):.2f})")
+
 # Create input sequences with lookback for The Very Hungry Caterpillar
 sequence_data = create_input_sequences_lstm(lookback, forecast, sequence_data=caterpillar_train_lstm)
 caterpillar_train_input_lstm = np.array(sequence_data["input_sequences"])
@@ -820,9 +891,21 @@ scaler_caterpillar = StandardScaler()
 caterpillar_train_input_lstm_scaled = scaler_caterpillar.fit_transform(caterpillar_train_input_lstm.reshape(-1, 1)).reshape(caterpillar_train_input_lstm.shape)
 caterpillar_train_output_lstm_scaled = scaler_caterpillar.transform(caterpillar_train_output_lstm.reshape(-1, 1)).reshape(caterpillar_train_output_lstm.shape)
 
-lstm_model = create_lstm_model(80, lookback, forecast)
+lstm_model = create_lstm_model(50, lookback, forecast)  # PHASE 2: Reduced from 80 to 50 units
+
+# PHASE 2: Add early stopping
+early_stop_cat = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1)
+
 # Train the model on The Very Hungry Caterpillar
-caterpillar_predictor = lstm_model.fit(caterpillar_train_input_lstm_scaled, caterpillar_train_output_lstm_scaled, epochs=60, batch_size=64, validation_split=0.2)
+caterpillar_predictor = lstm_model.fit(
+    caterpillar_train_input_lstm_scaled,
+    caterpillar_train_output_lstm_scaled,
+    epochs=100,  # PHASE 2: Increased max epochs with early stopping
+    batch_size=64,
+    validation_split=0.2,
+    callbacks=[early_stop_cat],  # PHASE 2: Add early stopping
+    verbose=0
+)
 
 # FIXED: Create test sequences and predict on TEST data
 sequence_data_test_cat = create_input_sequences_lstm(lookback, forecast, sequence_data=np.concatenate([caterpillar_train_lstm.flatten(), caterpillar_test_lstm.flatten()]))
@@ -1096,13 +1179,17 @@ def create_input_output_sequences(lookback, forecast, sequence_data):
 # best_model = hybrid_tuner.get_best_models(num_models=1)[0]
 
 # FIXED: Create hybrid model that outputs 32 residual forecasts, not 1
+# PHASE 2: Simplified to 2 layers with increased dropout
 def create_hybrid_lstm_model(forecast_steps=32):
-    """LSTM model for forecasting residuals (multi-step output)"""
+    """
+    LSTM model for forecasting residuals (multi-step output)
+    PHASE 2: Simplified architecture with 2 layers and dropout 0.3
+    """
     model = Sequential()
     model.add(LSTM(units=50, input_shape=(52, 1), return_sequences=True))
-    model.add(Dropout(0.2))
+    model.add(Dropout(0.3))  # PHASE 2: Increased from 0.2 to 0.3
     model.add(LSTM(units=50))
-    model.add(Dropout(0.2))
+    model.add(Dropout(0.3))  # PHASE 2: Increased from 0.2 to 0.3
     model.add(Dense(forecast_steps))  # FIXED: Output 32 residuals, not 1
     model.compile(loss='mse', optimizer='adam')
     return model
@@ -1116,8 +1203,10 @@ seq_residuals = create_input_sequences_lstm(lookback=52, forecast=32, sequence_d
 X_residuals = np.array(seq_residuals["input_sequences"])
 y_residuals = np.array(seq_residuals["output_sequences"])
 
-# Train on residuals
-hybrid_model.fit(X_residuals, y_residuals, epochs=30, batch_size=32, verbose=0)
+# PHASE 2: Train with early stopping
+early_stop_hybrid = EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True, verbose=1)
+hybrid_model.fit(X_residuals, y_residuals, epochs=50, batch_size=32,
+                 validation_split=0.2, callbacks=[early_stop_hybrid], verbose=0)
 
 # FIXED: Get SARIMA forecast for test period
 sarima_predictions = auto_arima_model_alchemist.predict(n_periods=32)
@@ -1154,8 +1243,10 @@ seq_cat_residuals = create_input_sequences_lstm(lookback=52, forecast=32, sequen
 X_cat_residuals = np.array(seq_cat_residuals["input_sequences"])
 y_cat_residuals = np.array(seq_cat_residuals["output_sequences"])
 
-# Train on residuals
-hybrid_model_cat.fit(X_cat_residuals, y_cat_residuals, epochs=30, batch_size=32, verbose=0)
+# PHASE 2: Train with early stopping
+early_stop_hybrid_cat = EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True, verbose=1)
+hybrid_model_cat.fit(X_cat_residuals, y_cat_residuals, epochs=50, batch_size=32,
+                     validation_split=0.2, callbacks=[early_stop_hybrid_cat], verbose=0)
 
 # FIXED: Get SARIMA forecast
 sarima_forecast_caterpillar = auto_arima_model_caterpillar.predict(n_periods=32)
