@@ -1077,12 +1077,12 @@ def data_for_visualisations_lstm(original_data, predictions, forecast_horizon, t
 
     return composed_data
 
-composed_data_alchemist = data_for_visualisations_lstm(alchemist_train_ml, alchemist_forecast, forecast_horizon, alchemist_train_ml.index)
+composed_data_alchemist = data_for_visualisations_lstm(alchemist_train_ml, alchemist_forecast_optuna, forecast_horizon, alchemist_train_ml.index)
 composed_data_alchemist.plot(figsize=(12, 6))
 plt.title('The Alchemist LSTM Forecast')
 plt.show()
 
-composed_data_caterpillar = data_for_visualisations_lstm(caterpillar_train_ml, caterpillar_forecast, forecast_horizon, caterpillar_train_ml.index)
+composed_data_caterpillar = data_for_visualisations_lstm(caterpillar_train_ml, caterpillar_forecast_optuna, forecast_horizon, caterpillar_train_ml.index)
 composed_data_caterpillar.plot(figsize=(12, 6))
 plt.title('The Very Hungry Caterpillar LSTM Forecast')
 plt.show()
@@ -1103,10 +1103,10 @@ def calculate_mae_mape(actual_data, forecast_data, forecast_horizon):
 forecast_horizon = 32
 
 # Calculate MAE and MAPE for The Alchemist
-mae_alchemist, mape_alchemist = calculate_mae_mape(alchemist_test_ml, alchemist_forecast, forecast_horizon)
+mae_alchemist, mape_alchemist = calculate_mae_mape(alchemist_test_ml, alchemist_forecast_optuna, forecast_horizon)
 
 # Calculate MAE and MAPE for The Very Hungry Caterpillar
-mae_caterpillar, mape_caterpillar = calculate_mae_mape(caterpillar_test_ml, caterpillar_forecast, forecast_horizon)
+mae_caterpillar, mape_caterpillar = calculate_mae_mape(caterpillar_test_ml, caterpillar_forecast_optuna, forecast_horizon)
 
 print("Alchemist MAE:", mae_alchemist)
 print("Alchemist MAPE:", mape_alchemist)
