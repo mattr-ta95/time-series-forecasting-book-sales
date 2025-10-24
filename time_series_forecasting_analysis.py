@@ -856,8 +856,8 @@ print("LSTM Test Actual (first 5):", alchemist_test_ml.values[:5])
 alchemist_predicted_lstm = pd.Series(alchemist_test_predictions.flatten()[:len(alchemist_test_ml)], index=alchemist_test_ml.index)
 
 plt.figure(figsize=(12, 6))
-plt.plot(alchemist_test_ml.index.to_timestamp(), alchemist_test_ml, label='Alchemist Test Data (Actual)')
-plt.plot(alchemist_predicted_lstm.index.to_timestamp(), alchemist_predicted_lstm, label='Alchemist LSTM Forecast')
+plt.plot(alchemist_test_ml.index, alchemist_test_ml, label='Alchemist Test Data (Actual)')
+plt.plot(alchemist_predicted_lstm.index, alchemist_predicted_lstm, label='Alchemist LSTM Forecast')
 plt.legend()
 plt.title('LSTM Forecast vs Actual - The Alchemist (FIXED)')
 plt.show()
@@ -928,8 +928,8 @@ caterpillar_predictions_lstm = pd.Series(caterpillar_test_predictions.flatten()[
 
 # Plot
 plt.figure(figsize=(12, 6))
-plt.plot(caterpillar_test_ml.index.to_timestamp(), caterpillar_test_ml, label='Caterpillar Test Data (Actual)')
-plt.plot(caterpillar_predictions_lstm.index.to_timestamp(), caterpillar_predictions_lstm, label='Caterpillar LSTM Forecast')
+plt.plot(caterpillar_test_ml.index, caterpillar_test_ml, label='Caterpillar Test Data (Actual)')
+plt.plot(caterpillar_predictions_lstm.index, caterpillar_predictions_lstm, label='Caterpillar LSTM Forecast')
 plt.legend()
 plt.title('LSTM Forecast vs Actual - The Very Hungry Caterpillar (FIXED)')
 plt.show()
