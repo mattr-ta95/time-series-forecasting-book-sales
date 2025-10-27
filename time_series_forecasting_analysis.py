@@ -1406,6 +1406,12 @@ plt.show()
 print(alchemist_train.index.freq)  # Should output 'W' or 'W-SUN' for correct weekly frequency
 print(caterpillar_train.index.freq)
 
+# Convert PeriodIndex to DatetimeIndex if needed (for monthly aggregation compatibility)
+if isinstance(alchemist_train.index, pd.PeriodIndex):
+    alchemist_train.index = alchemist_train.index.to_timestamp()
+if isinstance(caterpillar_train.index, pd.PeriodIndex):
+    caterpillar_train.index = caterpillar_train.index.to_timestamp()
+
 # Aggregate the weekly sales data to monthly sales data for both books
 alchemist_monthly = alchemist_train.groupby(pd.Grouper(freq='MS')).sum()
 caterpillar_monthly = caterpillar_train.groupby(pd.Grouper(freq='MS')).sum()
