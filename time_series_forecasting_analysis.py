@@ -1586,8 +1586,10 @@ def main():
     print("- Both books show seasonal patterns")
     print("- Hybrid models generally outperform individual models")
     print("- Monthly forecasts provide different insights than weekly forecasts")
-    
-    # Save plots to results directory
+
+    # Save plots to results directory (create directory if it doesn't exist)
+    import os
+    os.makedirs('results/plots', exist_ok=True)
     plt.savefig('results/plots/final_analysis.png', dpi=300, bbox_inches='tight')
     print("\nPlots saved to results/plots/ directory")
 
