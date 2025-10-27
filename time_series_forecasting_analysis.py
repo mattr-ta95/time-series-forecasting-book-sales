@@ -1314,9 +1314,20 @@ def build_lstm_model(hp):
     model.compile(loss='mean_squared_error', optimizer='adam')
     return model
 
-# Parallel hybrid: use default small model to keep runtime reasonable
-best_lstm_model = create_default_lstm_model()
-best_lstm_model.fit(X_train.reshape(X_train.shape[0], X_train.shape[1], 1), y_train, epochs=10, validation_split=0.2)
+# Parallel hybrid: use simple LSTM model
+def create_simple_parallel_lstm():
+    """Simple LSTM for parallel hybrid model"""
+    model = Sequential()
+    model.add(LSTM(units=50, activation='relu', input_shape=(52, 1)))
+    model.add(Dropout(0.3))
+    model.add(Dense(1))
+    model.compile(loss='mean_squared_error', optimizer='adam')
+    return model
+
+best_lstm_model = create_simple_parallel_lstm()
+early_stop_parallel = EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True, verbose=0)
+best_lstm_model.fit(X_train.reshape(X_train.shape[0], X_train.shape[1], 1), y_train,
+                    epochs=50, validation_split=0.2, callbacks=[early_stop_parallel], verbose=0)
 
 # Forecast using the trained LSTM model
 inputs = train_scaled[-look_back:]  # Last 'look_back' values as input
