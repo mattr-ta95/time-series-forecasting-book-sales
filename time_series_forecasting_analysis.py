@@ -770,10 +770,7 @@ alchemist_test_lstm = alchemist_test_ml.values.reshape(-1, 1)
 caterpillar_train_lstm = caterpillar_train_ml.values.reshape(-1, 1)
 caterpillar_test_lstm = caterpillar_test_ml.values.reshape(-1, 1)
 
-# Scale the data
-scaler = StandardScaler()
-caterpillar_train_lstm = scaler.fit_transform(caterpillar_train_lstm)
-caterpillar_test_lstm = scaler.transform(caterpillar_test_lstm)
+# NOTE: Scaling is done later in the LSTM section (line ~890) - no pre-scaling here
 
 def create_input_sequences_lstm(lookback, forecast, sequence_data):
   input_sequences = []
@@ -1015,15 +1012,25 @@ seq_data_alc = create_input_sequences_lstm(lookback=52, forecast=32, sequence_da
 X_train_alc = np.array(seq_data_alc["input_sequences"])
 y_train_alc = np.array(seq_data_alc["output_sequences"])
 
-# FIXED: Actually train the model
-alchemist_best_model.fit(X_train_alc, y_train_alc, epochs=30, batch_size=32, verbose=0)
+# FIXED: Add scaling for Optuna models (was missing!)
+scaler_optuna_alc = StandardScaler()
+X_train_alc_scaled = scaler_optuna_alc.fit_transform(X_train_alc.reshape(-1, 1)).reshape(X_train_alc.shape)
+y_train_alc_scaled = scaler_optuna_alc.transform(y_train_alc.reshape(-1, 1)).reshape(y_train_alc.shape)
+
+# FIXED: Actually train the model on SCALED data
+alchemist_best_model.fit(X_train_alc_scaled, y_train_alc_scaled, epochs=30, batch_size=32, verbose=0)
 
 # FIXED: Create test sequence and predict on TEST data
 full_data_alc = np.concatenate([alchemist_train_lstm_optuna, alchemist_test_ml.values.reshape(-1, 1)])
 seq_data_test_alc = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=full_data_alc)
 X_test_alc = np.array(seq_data_test_alc["input_sequences"])[-1:]  # Last sequence for forecasting
 
-alchemist_forecast_optuna = alchemist_best_model.predict(X_test_alc, verbose=0).flatten()
+# Scale test data and predict
+X_test_alc_scaled = scaler_optuna_alc.transform(X_test_alc.reshape(-1, 1)).reshape(X_test_alc.shape)
+alchemist_forecast_optuna_scaled = alchemist_best_model.predict(X_test_alc_scaled, verbose=0)
+
+# FIXED: Inverse transform predictions
+alchemist_forecast_optuna = scaler_optuna_alc.inverse_transform(alchemist_forecast_optuna_scaled.reshape(-1, 1)).flatten()
 
 # Caterpillar model with best Optuna params
 caterpillar_best_model = build_lstm_model_with_params(best_units_cat, best_dropout_cat, forecast_steps=32)
@@ -1034,15 +1041,25 @@ seq_data_cat = create_input_sequences_lstm(lookback=52, forecast=32, sequence_da
 X_train_cat = np.array(seq_data_cat["input_sequences"])
 y_train_cat = np.array(seq_data_cat["output_sequences"])
 
-# FIXED: Actually train the model
-caterpillar_best_model.fit(X_train_cat, y_train_cat, epochs=30, batch_size=32, verbose=0)
+# FIXED: Add scaling for Optuna models (was missing!)
+scaler_optuna_cat = StandardScaler()
+X_train_cat_scaled = scaler_optuna_cat.fit_transform(X_train_cat.reshape(-1, 1)).reshape(X_train_cat.shape)
+y_train_cat_scaled = scaler_optuna_cat.transform(y_train_cat.reshape(-1, 1)).reshape(y_train_cat.shape)
+
+# FIXED: Actually train the model on SCALED data
+caterpillar_best_model.fit(X_train_cat_scaled, y_train_cat_scaled, epochs=30, batch_size=32, verbose=0)
 
 # FIXED: Create test sequence and predict on TEST data
 full_data_cat = np.concatenate([caterpillar_train_lstm_optuna, caterpillar_test_ml.values.reshape(-1, 1)])
 seq_data_test_cat = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=full_data_cat)
 X_test_cat = np.array(seq_data_test_cat["input_sequences"])[-1:]  # Last sequence
 
-caterpillar_forecast_optuna = caterpillar_best_model.predict(X_test_cat, verbose=0).flatten()
+# Scale test data and predict
+X_test_cat_scaled = scaler_optuna_cat.transform(X_test_cat.reshape(-1, 1)).reshape(X_test_cat.shape)
+caterpillar_forecast_optuna_scaled = caterpillar_best_model.predict(X_test_cat_scaled, verbose=0)
+
+# FIXED: Inverse transform predictions
+caterpillar_forecast_optuna = scaler_optuna_cat.inverse_transform(caterpillar_forecast_optuna_scaled.reshape(-1, 1)).flatten()
 
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 # FIXED: Alchemist performance on TEST data
