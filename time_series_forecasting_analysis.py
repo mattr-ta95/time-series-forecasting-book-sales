@@ -1457,10 +1457,21 @@ if isinstance(caterpillar_train.index, pd.PeriodIndex):
 alchemist_monthly = alchemist_train.groupby(pd.Grouper(freq='MS')).sum()
 caterpillar_monthly = caterpillar_train.groupby(pd.Grouper(freq='MS')).sum()
 
+# FIXED: Split monthly data into train/test (80/20 split)
+split_point = int(len(alchemist_monthly) * 0.8)
+alchemist_monthly_train = alchemist_monthly[:split_point]
+alchemist_monthly_test = alchemist_monthly[split_point:]
+
+caterpillar_monthly_train = caterpillar_monthly[:split_point]
+caterpillar_monthly_test = caterpillar_monthly[split_point:]
+
 # Train the XGBoost model on this data
 import xgboost as xgb
 
-X_alchemist = alchemist_monthly.index.to_series().astype(int).values.reshape(-1, 1)
+# FIXED: Train only on TRAINING data
+X_alchemist_train = alchemist_monthly_train.index.to_series().astype(int).values.reshape(-1, 1)
+X_alchemist_test = alchemist_monthly_test.index.to_series().astype(int).values.reshape(-1, 1)
+
 alchemist_monthly_xgb = xgb.XGBRegressor(objective='reg:squarederror',
                                          n_estimators=200,
                                          max_depth=3,
@@ -1468,9 +1479,12 @@ alchemist_monthly_xgb = xgb.XGBRegressor(objective='reg:squarederror',
                                          booster='gbtree',
                                          tree_method='exact')
 
-alchemist_monthly_xgb.fit(X_alchemist, alchemist_monthly.values)
+alchemist_monthly_xgb.fit(X_alchemist_train, alchemist_monthly_train.values)
 
-X_caterpillar = caterpillar_monthly.index.to_series().astype(int).values.reshape(-1, 1)
+# FIXED: Train only on TRAINING data
+X_caterpillar_train = caterpillar_monthly_train.index.to_series().astype(int).values.reshape(-1, 1)
+X_caterpillar_test = caterpillar_monthly_test.index.to_series().astype(int).values.reshape(-1, 1)
+
 caterpillar_monthly_xgb = xgb.XGBRegressor(objective='reg:squarederror',
                                          n_estimators=200,
                                          max_depth=3,
@@ -1479,13 +1493,15 @@ caterpillar_monthly_xgb = xgb.XGBRegressor(objective='reg:squarederror',
                                          tree_method='exact',
                                          reg_alpha=1,
                                          reg_lambda=1)
-caterpillar_monthly_xgb.fit(X_caterpillar, caterpillar_monthly.values)
+caterpillar_monthly_xgb.fit(X_caterpillar_train, caterpillar_monthly_train.values)
 
-# Plot the results
+# Plot the results - FIXED: Show train data + test predictions only
 plt.figure(figsize=(12, 6))
-plt.plot(alchemist_monthly.index, alchemist_monthly, label='Actual')
-plt.plot(alchemist_monthly.index, alchemist_monthly_xgb.predict(X_alchemist), label='Monthly Forecast')
-plt.title('Monthly XGBoost Forecast for The Alchemist')
+plt.plot(alchemist_monthly_train.index, alchemist_monthly_train, label='Training Data', color='blue')
+plt.plot(alchemist_monthly_test.index, alchemist_monthly_test, label='Test Data (Actual)', color='green')
+plt.plot(alchemist_monthly_test.index, alchemist_monthly_xgb.predict(X_alchemist_test),
+         label='Test Forecast', color='red', linestyle='--')
+plt.title('Monthly XGBoost Forecast for The Alchemist (Test Set)')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
@@ -1494,9 +1510,11 @@ plt.close()
 print("✓ Saved: results/plots/08_monthly_xgboost_alchemist.png")
 
 plt.figure(figsize=(12,6))
-plt.plot(caterpillar_monthly.index, caterpillar_monthly, label='Actual')
-plt.plot(caterpillar_monthly.index, caterpillar_monthly_xgb.predict(X_caterpillar), label='Monthly Forecast')
-plt.title('Monthly XGBoost Forecast for The Very Hungry Caterpillar')
+plt.plot(caterpillar_monthly_train.index, caterpillar_monthly_train, label='Training Data', color='blue')
+plt.plot(caterpillar_monthly_test.index, caterpillar_monthly_test, label='Test Data (Actual)', color='green')
+plt.plot(caterpillar_monthly_test.index, caterpillar_monthly_xgb.predict(X_caterpillar_test),
+         label='Test Forecast', color='red', linestyle='--')
+plt.title('Monthly XGBoost Forecast for The Very Hungry Caterpillar (Test Set)')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
@@ -1504,18 +1522,18 @@ plt.savefig('results/plots/09_monthly_xgboost_caterpillar.png', dpi=300, bbox_in
 plt.close()
 print("✓ Saved: results/plots/09_monthly_xgboost_caterpillar.png")
 
-# MAE & MAPE
-mae_alchemist_monthly = mean_absolute_error(alchemist_monthly, alchemist_monthly_xgb.predict(X_alchemist))
-mape_alchemist_monthly = mean_absolute_percentage_error(alchemist_monthly, alchemist_monthly_xgb.predict(X_alchemist))
+# MAE & MAPE - FIXED: Evaluate on TEST data only
+mae_alchemist_monthly = mean_absolute_error(alchemist_monthly_test, alchemist_monthly_xgb.predict(X_alchemist_test))
+mape_alchemist_monthly = mean_absolute_percentage_error(alchemist_monthly_test, alchemist_monthly_xgb.predict(X_alchemist_test))
 
-mae_caterpillar_monthly = mean_absolute_error(caterpillar_monthly, caterpillar_monthly_xgb.predict(X_caterpillar))
-mape_caterpillar_monthly = mean_absolute_percentage_error(caterpillar_monthly, caterpillar_monthly_xgb.predict(X_caterpillar))
+mae_caterpillar_monthly = mean_absolute_error(caterpillar_monthly_test, caterpillar_monthly_xgb.predict(X_caterpillar_test))
+mape_caterpillar_monthly = mean_absolute_percentage_error(caterpillar_monthly_test, caterpillar_monthly_xgb.predict(X_caterpillar_test))
 
-print("Alchemist Monthly MAE:", mae_alchemist_monthly)
-print("Alchemist Monthly MAPE:", mape_alchemist_monthly)
+print("Alchemist Monthly XGBoost (Test Set) - MAE:", mae_alchemist_monthly)
+print("Alchemist Monthly XGBoost (Test Set) - MAPE:", mape_alchemist_monthly)
 
-print("Caterpillar Monthly MAE:", mae_caterpillar_monthly)
-print("Caterpillar Monthly MAPE:", mape_caterpillar_monthly)
+print("Caterpillar Monthly XGBoost (Test Set) - MAE:", mae_caterpillar_monthly)
+print("Caterpillar Monthly XGBoost (Test Set) - MAPE:", mape_caterpillar_monthly)
 
 # Aggregate weekly data to monthly data
 alchemist_monthly = alchemist['Volume'].resample('MS').sum()  # 'MS' for start of month
