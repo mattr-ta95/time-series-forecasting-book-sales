@@ -67,6 +67,11 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+# Create directory for saving plots
+import os
+os.makedirs('results/plots', exist_ok=True)
+print("Plots will be saved to: results/plots/")
+
 from sklearn.metrics import mean_absolute_error
 from sklearn.metrics import mean_absolute_percentage_error
 from sklearn.metrics import mean_squared_error
@@ -857,7 +862,9 @@ plt.plot(alchemist_test_ml.index, alchemist_test_ml, label='Alchemist Test Data 
 plt.plot(alchemist_predicted_lstm.index, alchemist_predicted_lstm, label='Alchemist LSTM Forecast')
 plt.legend()
 plt.title('LSTM Forecast vs Actual - The Alchemist (FIXED)')
-plt.show()
+plt.savefig('results/plots/01_lstm_alchemist_forecast.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/01_lstm_alchemist_forecast.png")
 
 # MAE and MAPE values - NOW ON TEST DATA
 mae_alchemist = mean_absolute_error(alchemist_test_ml[:len(alchemist_predicted_lstm)], alchemist_predicted_lstm)
@@ -929,7 +936,9 @@ plt.plot(caterpillar_test_ml.index, caterpillar_test_ml, label='Caterpillar Test
 plt.plot(caterpillar_predictions_lstm.index, caterpillar_predictions_lstm, label='Caterpillar LSTM Forecast')
 plt.legend()
 plt.title('LSTM Forecast vs Actual - The Very Hungry Caterpillar (FIXED)')
-plt.show()
+plt.savefig('results/plots/02_lstm_caterpillar_forecast.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/02_lstm_caterpillar_forecast.png")
 
 # MAE and MAPE values - NOW ON TEST DATA
 mae_caterpillar = mean_absolute_error(caterpillar_test_ml[:len(caterpillar_predictions_lstm)], caterpillar_predictions_lstm)
@@ -1096,13 +1105,17 @@ def data_for_visualisations_lstm(original_data, predictions, forecast_horizon, t
 
 composed_data_alchemist = data_for_visualisations_lstm(alchemist_train_ml, alchemist_forecast_optuna, forecast_horizon, alchemist_train_ml.index)
 composed_data_alchemist.plot(figsize=(12, 6))
-plt.title('The Alchemist LSTM Forecast')
-plt.show()
+plt.title('The Alchemist LSTM Forecast (Optuna-optimized)')
+plt.savefig('results/plots/03_optuna_alchemist_forecast.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/03_optuna_alchemist_forecast.png")
 
 composed_data_caterpillar = data_for_visualisations_lstm(caterpillar_train_ml, caterpillar_forecast_optuna, forecast_horizon, caterpillar_train_ml.index)
 composed_data_caterpillar.plot(figsize=(12, 6))
-plt.title('The Very Hungry Caterpillar LSTM Forecast')
-plt.show()
+plt.title('The Very Hungry Caterpillar LSTM Forecast (Optuna-optimized)')
+plt.savefig('results/plots/04_optuna_caterpillar_forecast.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/04_optuna_caterpillar_forecast.png")
 
 # MAE and MAPE for both books
 def calculate_mae_mape(actual_data, forecast_data, forecast_horizon):
@@ -1240,13 +1253,16 @@ mae_hybrid = mean_absolute_error(alchemist_test, final_predictions)
 mape_hybrid = mean_absolute_percentage_error(alchemist_test, final_predictions)
 print(f"Sequential Hybrid (Alchemist) - MAE: {mae_hybrid:.2f}, MAPE: {mape_hybrid:.4f}")
 
+plt.figure(figsize=(12, 6))
 plt.plot(alchemist_test.index, alchemist_test, label='Actual')
 plt.plot(alchemist_test.index, final_predictions, label='Hybrid Forecast')
-plt.title('Hybrid Forecast for The Alchemist - Sequential')
+plt.title('Hybrid Forecast for The Alchemist - Sequential (SARIMA + LSTM)')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
-plt.show()
+plt.savefig('results/plots/05_sequential_hybrid_alchemist.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/05_sequential_hybrid_alchemist.png")
 
 # FIXED: Sequential Hybrid Model for The Very Hungry Caterpillar
 caterpillar_residuals = auto_arima_model_caterpillar.resid()
@@ -1285,13 +1301,16 @@ caterpillar_test_lstm_hybrid = caterpillar_test.copy()
 # Now create the Series
 caterpillar_test_lstm_hybrid = pd.Series(caterpillar_test_lstm_hybrid, index=caterpillar_test.index)
 
+plt.figure(figsize=(12, 6))
 plt.plot(caterpillar_test_lstm_hybrid.index, caterpillar_test_lstm_hybrid, label='Actual')
 plt.plot(caterpillar_test_lstm_hybrid.index, hybrid_forecast_caterpillar, label='Hybrid Forecast')
-plt.title('Hybrid Forecast for Caterpillar - Sequential')
+plt.title('Hybrid Forecast for Caterpillar - Sequential (SARIMA + LSTM)')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
-plt.show()
+plt.savefig('results/plots/06_sequential_hybrid_caterpillar.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/06_sequential_hybrid_caterpillar.png")
 
 # Parallel Hybrid Model
 # Using the best SARIMA model using auto_arima
@@ -1371,11 +1390,16 @@ print(f"MAE: {mae:.2f}")
 print(f"MAPE: {mape:.2f}")
 
 # Plot the results
+plt.figure(figsize=(12, 6))
 plt.plot(alchemist_test.index, alchemist_test, label='Actual')
 plt.plot(alchemist_test.index, hybrid_forecast, label='Hybrid Forecast')
 plt.legend()
-plt.title('Parallel Hybrid Model Forecast - The Alchemist')
-plt.show()
+plt.title('Parallel Hybrid Model Forecast - The Alchemist (Weighted SARIMA+LSTM)')
+plt.xlabel('Date')
+plt.ylabel('Sales Volume')
+plt.savefig('results/plots/07_parallel_hybrid_alchemist.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/07_parallel_hybrid_alchemist.png")
 
 # Search the weights to find the best forecast
 weights = [(x, 1-x) for x in np.arange(0, 1.1, 0.1)]
@@ -1461,20 +1485,24 @@ caterpillar_monthly_xgb.fit(X_caterpillar, caterpillar_monthly.values)
 plt.figure(figsize=(12, 6))
 plt.plot(alchemist_monthly.index, alchemist_monthly, label='Actual')
 plt.plot(alchemist_monthly.index, alchemist_monthly_xgb.predict(X_alchemist), label='Monthly Forecast')
-plt.title('Monthly Forecast for The Alchemist')
+plt.title('Monthly XGBoost Forecast for The Alchemist')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
-plt.show()
+plt.savefig('results/plots/08_monthly_xgboost_alchemist.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/08_monthly_xgboost_alchemist.png")
 
 plt.figure(figsize=(12,6))
 plt.plot(caterpillar_monthly.index, caterpillar_monthly, label='Actual')
 plt.plot(caterpillar_monthly.index, caterpillar_monthly_xgb.predict(X_caterpillar), label='Monthly Forecast')
-plt.title('Monthly Forecast for The Very Hungry Caterpillar')
+plt.title('Monthly XGBoost Forecast for The Very Hungry Caterpillar')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
-plt.show()
+plt.savefig('results/plots/09_monthly_xgboost_caterpillar.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/09_monthly_xgboost_caterpillar.png")
 
 # MAE & MAPE
 mae_alchemist_monthly = mean_absolute_error(alchemist_monthly, alchemist_monthly_xgb.predict(X_alchemist))
@@ -1604,11 +1632,19 @@ def main():
     print("- Hybrid models generally outperform individual models")
     print("- Monthly forecasts provide different insights than weekly forecasts")
 
-    # Save plots to results directory (create directory if it doesn't exist)
-    import os
-    os.makedirs('results/plots', exist_ok=True)
-    plt.savefig('results/plots/final_analysis.png', dpi=300, bbox_inches='tight')
-    print("\nPlots saved to results/plots/ directory")
+    print("\n" + "=" * 50)
+    print("ALL PLOTS SAVED TO: results/plots/")
+    print("=" * 50)
+    print("📊 9 visualization files created:")
+    print("  01_lstm_alchemist_forecast.png")
+    print("  02_lstm_caterpillar_forecast.png")
+    print("  03_optuna_alchemist_forecast.png")
+    print("  04_optuna_caterpillar_forecast.png")
+    print("  05_sequential_hybrid_alchemist.png")
+    print("  06_sequential_hybrid_caterpillar.png")
+    print("  07_parallel_hybrid_alchemist.png")
+    print("  08_monthly_xgboost_alchemist.png")
+    print("  09_monthly_xgboost_caterpillar.png")
 
 if __name__ == "__main__":
     main()
