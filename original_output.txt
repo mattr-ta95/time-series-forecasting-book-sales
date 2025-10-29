@@ -1,0 +1,119 @@
+2025-10-21 09:18:34.342256: I tensorflow/core/util/port.cc:113] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2025-10-21 09:18:34.346397: I external/local_tsl/tsl/cuda/cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+2025-10-21 09:18:34.406761: E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:9261] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+2025-10-21 09:18:34.407078: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:607] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2025-10-21 09:18:34.408844: E external/local_xla/xla/stream_executor/cuda/cuda_blas.cc:1515] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2025-10-21 09:18:34.418809: I external/local_tsl/tsl/cuda/cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+2025-10-21 09:18:34.419232: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2025-10-21 09:18:36.137055: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+ All libraries imported successfully!
+dict_keys(['F Adult Fiction', 'S Adult Non-Fiction Specialist', 'T Adult Non-Fiction Trade', "Y Children's, YA & Educational"])
+dict_keys(['F - Adult Fiction', 'S Adult Non-Fiction Specialist', 'T Adult Non-Fiction Trade', "Y Children's, YA & Educational"])
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 227224 entries, 0 to 227223
+Data columns (total 14 columns):
+ #   Column           Non-Null Count   Dtype         
+---  ------           --------------   -----         
+ 0   ISBN             227224 non-null  int64         
+ 1   Title            227224 non-null  object        
+ 2   Author           212345 non-null  object        
+ 3   Interval         227224 non-null  int64         
+ 4   End Date         227224 non-null  datetime64[ns]
+ 5   Volume           227224 non-null  int64         
+ 6   Value            227224 non-null  float64       
+ 7   ASP              226881 non-null  float64       
+ 8   RRP              221262 non-null  float64       
+ 9   Binding          227224 non-null  object        
+ 10  Imprint          227224 non-null  object        
+ 11  Publisher Group  227224 non-null  object        
+ 12  Product Class    227224 non-null  object        
+ 13  Category         227224 non-null  object        
+dtypes: datetime64[ns](1), float64(3), int64(3), object(7)
+memory usage: 24.3+ MB
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 500 entries, 0 to 499
+Data columns (total 11 columns):
+ #   Column                  Non-Null Count  Dtype         
+---  ------                  --------------  -----         
+ 0   ISBN                    500 non-null    int64         
+ 1   Title                   500 non-null    object        
+ 2   Author                  426 non-null    object        
+ 3   Imprint                 500 non-null    object        
+ 4   Publisher Group         500 non-null    object        
+ 5   RRP                     473 non-null    float64       
+ 6   Binding                 500 non-null    object        
+ 7   Publication Date        500 non-null    datetime64[ns]
+ 8   Product Class           500 non-null    object        
+ 9   Country of Publication  500 non-null    object        
+ 10  Category                500 non-null    object        
+dtypes: datetime64[ns](1), float64(1), int64(1), object(8)
+memory usage: 43.1+ KB
+[ 1.          0.75901794  0.5495161   0.42190517  0.33375926  0.28079437
+  0.26356923  0.2439501   0.20986986  0.16444318  0.15520776  0.1538454
+  0.14570682  0.15354245  0.15161511  0.14328965  0.13017835  0.12958128
+  0.14102128  0.1548907   0.12979034  0.10806976  0.11554239  0.1308911
+  0.12994912  0.14082793  0.13639603  0.13543801  0.13588337  0.13908239
+  0.13900895  0.13156465  0.14647862  0.17465156  0.17159547  0.16218978
+  0.15697217  0.15817989  0.15823378  0.15951027  0.14826183  0.13016055
+  0.09987751  0.07000589  0.07653157  0.0859885   0.08253407  0.07292153
+  0.08776521  0.13837458  0.21106807  0.32871859  0.50154012  0.40273587
+  0.23968724  0.13929308  0.06099089  0.01815776  0.01328768  0.01019464
+ -0.01182981]
+[1.         0.84828132 0.70039492 0.57655402 0.4955095  0.4516801
+ 0.43010375 0.41616968 0.40484963 0.40271028 0.41576349 0.40967459
+ 0.39450583 0.400866   0.42013753 0.4010072  0.3805002  0.35693906
+ 0.34462961 0.33321134 0.31903562 0.3007348  0.30190696 0.31139894
+ 0.31451505 0.32045706 0.31551438 0.31756841 0.32171934 0.33035453
+ 0.33422093 0.33764473 0.35092594 0.36137706 0.36657404 0.35613767
+ 0.35786196 0.35447171 0.35730147 0.35189562 0.33851946 0.32320198
+ 0.30802701 0.27264129 0.25413413 0.25009278 0.23986976 0.22066976
+ 0.23358565 0.26125788 0.30902198 0.37634494 0.44859121 0.40954851
+ 0.32972009 0.24890286 0.19504697 0.1638571  0.1647148  0.1755624
+ 0.1840268 ]
+p-value. The Alchemist: 4.139950963711046e-13
+p-value. The Very Hungry Caterpillar: 0.029614783972688373
+Using 15 CPU cores for parallel processing
+ ARIMA(0,1,5)(0,0,0)[52] intercept   : AIC=7914.228, Time=0.27 sec
+ ARIMA(5,1,0)(0,0,0)[52] intercept   : AIC=7948.016, Time=0.09 sec
+ ARIMA(2,1,0)(0,0,1)[52] intercept   : AIC=7822.394, Time=2.24 sec
+ ARIMA(0,1,1)(1,0,0)[52] intercept   : AIC=7708.346, Time=2.52 sec
+ ARIMA(0,1,4)(1,0,0)[52] intercept   : AIC=7682.524, Time=5.69 sec
+ ARIMA(3,1,1)(1,0,0)[52] intercept   : AIC=inf, Time=6.65 sec
+ ARIMA(2,1,0)(2,0,0)[52] intercept   : AIC=inf, Time=23.98 sec
+ ARIMA(1,1,0)(2,0,1)[52] intercept   : AIC=7667.299, Time=24.43 sec
+ ARIMA(1,1,2)(0,0,2)[52] intercept   : AIC=inf, Time=34.07 sec
+ ARIMA(2,1,0)(2,0,1)[52] intercept   : AIC=7647.516, Time=50.19 sec
+
+Best model:  ARIMA(2,1,0)(2,0,1)[52] intercept
+Total fit time: 63.105 seconds
+ ARIMA(1,1,0)(0,0,0)[52] intercept   : AIC=9142.472, Time=0.06 sec
+ ARIMA(0,1,5)(0,0,0)[52] intercept   : AIC=9073.554, Time=0.37 sec
+ ARIMA(0,1,3)(0,0,1)[52] intercept   : AIC=9056.379, Time=4.25 sec
+ ARIMA(0,1,0)(1,0,0)[52] intercept   : AIC=9055.450, Time=5.49 sec
+ ARIMA(1,1,1)(0,0,1)[52] intercept   : AIC=inf, Time=6.01 sec
+ ARIMA(1,1,0)(1,0,0)[52] intercept   : AIC=9056.508, Time=3.90 sec
+ ARIMA(2,1,0)(1,0,1)[52] intercept   : AIC=9032.866, Time=7.31 sec
+ ARIMA(2,1,1)(1,0,1)[52] intercept   : AIC=inf, Time=10.41 sec
+ ARIMA(1,1,0)(2,0,0)[52] intercept   : AIC=inf, Time=20.07 sec
+ ARIMA(0,1,0)(1,0,2)[52] intercept   : AIC=9034.225, Time=20.49 sec
+
+Best model:  ARIMA(2,1,0)(1,0,1)[52] intercept
+Total fit time: 38.513 seconds
+ MSE for Auto ARIMA model Alchemist: 44956.42
+ MSE for Auto ARIMA model Caterpillar: 193820.51
+ RMSE for Auto ARIMA model Alchemist: 212.03
+ RMSE for Auto ARIMA model Caterpillar: 440.25
+<class 'pandas.core.series.Series'>
+DatetimeIndex: 623 entries, 2012-01-08 to 2023-12-10
+Freq: W-SUN
+Series name: Volume
+Non-Null Count  Dtype  
+--------------  -----  
+623 non-null    float64
+dtypes: float64(1)
+memory usage: 9.7 KB
+Traceback (most recent call last):
+  File "/home/user/time-series-forecasting-book-sales/time_series_forecasting_analysis.py", line 536, in <module>
+    from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
+ModuleNotFoundError: No module named 'hyperopt'

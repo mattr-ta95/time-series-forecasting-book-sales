@@ -67,6 +67,11 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+# Create directory for saving plots
+import os
+os.makedirs('results/plots', exist_ok=True)
+print("Plots will be saved to: results/plots/")
+
 from sklearn.metrics import mean_absolute_error
 from sklearn.metrics import mean_absolute_percentage_error
 from sklearn.metrics import mean_squared_error
@@ -84,9 +89,60 @@ from sklearn.preprocessing import MinMaxScaler
 
 from keras.models import Sequential
 from keras.layers import Dense, LSTM, Dropout
+from keras.callbacks import EarlyStopping  # PHASE 2: Add early stopping
 
 # Hyperparameter tuning
 import optuna
+
+# PHASE 2: Cross-validation function for time series
+def time_series_cv_score(model_func, X, y, n_splits=3):
+    """
+    Perform time series cross-validation with expanding window.
+
+    Args:
+        model_func: Function that creates and returns a compiled model
+        X: Input sequences
+        y: Output sequences
+        n_splits: Number of CV splits
+
+    Returns:
+        List of validation MAE scores for each split
+    """
+    from sklearn.metrics import mean_absolute_error
+
+    n_samples = len(X)
+    test_size = n_samples // (n_splits + 1)
+    scores = []
+
+    print(f"  Running {n_splits}-fold time series CV...")
+
+    for i in range(n_splits):
+        # Expanding window: train size increases with each fold
+        train_end = test_size * (i + 2)
+        test_start = test_size * (i + 1)
+        test_end = train_end
+
+        X_train_cv = X[:test_start]
+        y_train_cv = y[:test_start]
+        X_val_cv = X[test_start:test_end]
+        y_val_cv = y[test_start:test_end]
+
+        if len(X_val_cv) == 0:
+            continue
+
+        # Train model
+        model = model_func()
+        early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True, verbose=0)
+        model.fit(X_train_cv, y_train_cv, epochs=50, batch_size=32,
+                 validation_split=0.2, callbacks=[early_stop], verbose=0)
+
+        # Evaluate
+        pred = model.predict(X_val_cv, verbose=0)
+        mae = mean_absolute_error(y_val_cv.flatten(), pred.flatten())
+        scores.append(mae)
+        print(f"    Fold {i+1}: MAE = {mae:.2f}")
+
+    return scores
 
 # Load datasets from local data directory
 import os
@@ -719,10 +775,7 @@ alchemist_test_lstm = alchemist_test_ml.values.reshape(-1, 1)
 caterpillar_train_lstm = caterpillar_train_ml.values.reshape(-1, 1)
 caterpillar_test_lstm = caterpillar_test_ml.values.reshape(-1, 1)
 
-# Scale the data
-scaler = StandardScaler()
-caterpillar_train_lstm = scaler.fit_transform(caterpillar_train_lstm)
-caterpillar_test_lstm = scaler.transform(caterpillar_test_lstm)
+# NOTE: Scaling is done later in the LSTM section (line ~890) - no pre-scaling here
 
 def create_input_sequences_lstm(lookback, forecast, sequence_data):
   input_sequences = []
@@ -737,19 +790,18 @@ def create_input_sequences_lstm(lookback, forecast, sequence_data):
 
   return { "input_sequences": input_sequences,"output_sequences": output_sequences }
 
-# Create an LSTM model for both books
+# PHASE 2: Simplified LSTM model - reduced from 5 layers to 2, nodes from 80 to 50
 def create_lstm_model(nodes, lookback, forecast):
+    """
+    Simplified LSTM architecture to reduce overfitting.
+    Previous: 5 layers x 80 units = ~200K parameters
+    Current: 2 layers x 50 units = ~50K parameters
+    """
     model = Sequential()
     model.add(LSTM(units=nodes, input_shape=(lookback, 1), return_sequences=True))
-    model.add(Dropout(0.2))
-    model.add(LSTM(units=nodes, return_sequences=True))
-    model.add(Dropout(0.2))
-    model.add(LSTM(units=nodes, return_sequences=True))
-    model.add(Dropout(0.2))
-    model.add(LSTM(units=nodes,return_sequences=True))
-    model.add(Dropout(0.2))
+    model.add(Dropout(0.3))  # Increased dropout from 0.2 to 0.3
     model.add(LSTM(units=nodes))
-    model.add(Dropout(0.2))
+    model.add(Dropout(0.3))
     model.add(Dense(forecast))
     model.compile(loss='mse', optimizer='adam')
     return model
@@ -757,7 +809,7 @@ def create_lstm_model(nodes, lookback, forecast):
 # Create the model summary
 lookback = 52
 forecast = 32
-nodes = 80
+nodes = 50  # PHASE 2: Reduced from 80 to 50
 lstm_model = create_lstm_model(nodes, lookback, forecast)
 lstm_model.summary()
 
@@ -766,44 +818,69 @@ sequence_data = create_input_sequences_lstm(lookback, forecast, sequence_data=al
 alchemist_train_input_lstm = np.array(sequence_data["input_sequences"])
 alchemist_train_output_lstm = np.array(sequence_data["output_sequences"])
 
-# Scale the data
-scaler = StandardScaler()
-alchemist_train_input_lstm = scaler.fit_transform(alchemist_train_input_lstm.reshape(-1, 1)).reshape(alchemist_train_input_lstm.shape)
-scaled_output = scaler.fit_transform(alchemist_train_output_lstm.reshape(-1, 1)).reshape(alchemist_train_output_lstm.shape)
+# FIXED: Use consistent scaling with same scaler for input and output
+scaler_alchemist = StandardScaler()
+alchemist_train_input_lstm_scaled = scaler_alchemist.fit_transform(alchemist_train_input_lstm.reshape(-1, 1)).reshape(alchemist_train_input_lstm.shape)
+scaled_output = scaler_alchemist.transform(alchemist_train_output_lstm.reshape(-1, 1)).reshape(alchemist_train_output_lstm.shape)
 
 lstm_model = create_lstm_model(nodes, lookback, forecast)
+
+# PHASE 2: Add early stopping to prevent overfitting
+early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1)
+
 # Train the model on the Alchemist
-alchemist_predictor = lstm_model.fit(alchemist_train_input_lstm, scaled_output, epochs=50, batch_size=64, validation_split=0.2)
+alchemist_predictor = lstm_model.fit(
+    alchemist_train_input_lstm_scaled,
+    scaled_output,
+    epochs=100,  # PHASE 2: Increased max epochs, but early stopping will prevent overfitting
+    batch_size=64,
+    validation_split=0.2,
+    callbacks=[early_stop],  # PHASE 2: Add early stopping
+    verbose=0
+)
 
-# Make predictions on the training data
-alchemist_train_predictions = lstm_model.predict(alchemist_train_input_lstm)
-alchemist_train_predictions = alchemist_train_predictions.reshape(-1,1)
+# FIXED: Create proper test sequences and predict on TEST data, not training
+sequence_data_test = create_input_sequences_lstm(lookback, forecast, sequence_data=np.concatenate([alchemist_train_lstm, alchemist_test_lstm]))
+alchemist_test_input_lstm = np.array(sequence_data_test["input_sequences"])[-1:]  # Last sequence for forecasting
+alchemist_test_input_lstm_scaled = scaler_alchemist.transform(alchemist_test_input_lstm.reshape(-1, 1)).reshape(alchemist_test_input_lstm.shape)
 
-# Reshape the output
-alchemist_train_output_lstm = alchemist_train_output_lstm.reshape(-1,1)
+# Make predictions on the TEST data
+alchemist_test_predictions = lstm_model.predict(alchemist_test_input_lstm_scaled)
+alchemist_test_predictions = alchemist_test_predictions.reshape(-1, 1)
 
 # Invert the scaling on predictions
-alchemist_train_predictions = scaler.inverse_transform(alchemist_train_predictions)
+alchemist_test_predictions = scaler_alchemist.inverse_transform(alchemist_test_predictions)
 
-# Compare the last predicted value with the last actual value in the training set
-print("Train Predictions:", alchemist_train_predictions[-1])
-print("Train Actual:", alchemist_train_output_lstm[-1])
+print("LSTM Test Predictions (first 5):", alchemist_test_predictions[:5].flatten())
+print("LSTM Test Actual (first 5):", alchemist_test_ml.values[:5])
 
-# Convert to a Series with the correct index
-alchemist_predicted_lstm = pd.Series(alchemist_train_predictions[-32:].flatten(), index=alchemist_train_ml.index[-32:])
+# Convert to a Series with the correct TEST index
+alchemist_predicted_lstm = pd.Series(alchemist_test_predictions.flatten()[:len(alchemist_test_ml)], index=alchemist_test_ml.index)
 
 plt.figure(figsize=(12, 6))
-plt.plot(alchemist_train_ml.index[-32:].to_timestamp(), alchemist_train_ml[-32:], label='Alchemist Training Data')
-plt.plot(alchemist_train_ml.index[-32:].to_timestamp(), alchemist_predicted_lstm, label='Alchemist Predicted Values')
+plt.plot(alchemist_test_ml.index, alchemist_test_ml, label='Alchemist Test Data (Actual)')
+plt.plot(alchemist_predicted_lstm.index, alchemist_predicted_lstm, label='Alchemist LSTM Forecast')
 plt.legend()
-plt.show()
+plt.title('LSTM Forecast vs Actual - The Alchemist (FIXED)')
+plt.savefig('results/plots/01_lstm_alchemist_forecast.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/01_lstm_alchemist_forecast.png")
 
-# MAE and MAPE values
-mae_alchemist = mean_absolute_error(alchemist_train_ml[-32:], alchemist_predicted_lstm)
-print("MAE:", mae_alchemist)
+# MAE and MAPE values - NOW ON TEST DATA
+mae_alchemist = mean_absolute_error(alchemist_test_ml[:len(alchemist_predicted_lstm)], alchemist_predicted_lstm)
+print("LSTM MAE (Alchemist):", mae_alchemist)
 
-mape_alchemist = mean_absolute_percentage_error(alchemist_train_ml[-32:], alchemist_predicted_lstm)
-print("MAPE:", mape_alchemist)
+mape_alchemist = mean_absolute_percentage_error(alchemist_test_ml[:len(alchemist_predicted_lstm)], alchemist_predicted_lstm)
+print("LSTM MAPE (Alchemist):", mape_alchemist)
+
+# PHASE 2: Cross-validation to assess model stability
+print("\nPHASE 2: Cross-validation for model stability assessment")
+def create_cv_model():
+    return create_lstm_model(nodes=50, lookback=52, forecast=32)
+
+cv_scores = time_series_cv_score(create_cv_model, alchemist_train_input_lstm_scaled, scaled_output, n_splits=3)
+print(f"  CV MAE scores: {cv_scores}")
+print(f"  Mean CV MAE: {np.mean(cv_scores):.2f} (+/- {np.std(cv_scores):.2f})")
 
 # Create input sequences with lookback for The Very Hungry Caterpillar
 sequence_data = create_input_sequences_lstm(lookback, forecast, sequence_data=caterpillar_train_lstm)
@@ -813,60 +890,84 @@ caterpillar_train_output_lstm = np.array(sequence_data["output_sequences"])
 # Reshape the input to be [samples, time steps, features]
 caterpillar_train_input_lstm = caterpillar_train_input_lstm.reshape((caterpillar_train_input_lstm.shape[0], caterpillar_train_input_lstm.shape[1], 1))
 
-lstm_model = create_lstm_model(80, lookback, forecast)
+# FIXED: Use separate scaler for caterpillar (already scaled earlier at line 724)
+scaler_caterpillar = StandardScaler()
+caterpillar_train_input_lstm_scaled = scaler_caterpillar.fit_transform(caterpillar_train_input_lstm.reshape(-1, 1)).reshape(caterpillar_train_input_lstm.shape)
+caterpillar_train_output_lstm_scaled = scaler_caterpillar.transform(caterpillar_train_output_lstm.reshape(-1, 1)).reshape(caterpillar_train_output_lstm.shape)
+
+lstm_model = create_lstm_model(50, lookback, forecast)  # PHASE 2: Reduced from 80 to 50 units
+
+# PHASE 2: Add early stopping
+early_stop_cat = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1)
+
 # Train the model on The Very Hungry Caterpillar
-caterpillar_predictor = lstm_model.fit(caterpillar_train_input_lstm, caterpillar_train_output_lstm, epochs=60, batch_size=64, validation_split=0.2)
+caterpillar_predictor = lstm_model.fit(
+    caterpillar_train_input_lstm_scaled,
+    caterpillar_train_output_lstm_scaled,
+    epochs=100,  # PHASE 2: Increased max epochs with early stopping
+    batch_size=64,
+    validation_split=0.2,
+    callbacks=[early_stop_cat],  # PHASE 2: Add early stopping
+    verbose=0
+)
 
-# Make predictions on the training data
-caterpillar_train_predictions = lstm_model.predict(caterpillar_train_input_lstm)
-caterpillar_train_predictions = caterpillar_train_predictions.reshape(-1,1)
+# FIXED: Create test sequences and predict on TEST data
+sequence_data_test_cat = create_input_sequences_lstm(lookback, forecast, sequence_data=np.concatenate([caterpillar_train_lstm.flatten(), caterpillar_test_lstm.flatten()]))
+caterpillar_test_input_lstm = np.array(sequence_data_test_cat["input_sequences"])[-1:]
+caterpillar_test_input_lstm = caterpillar_test_input_lstm.reshape((caterpillar_test_input_lstm.shape[0], caterpillar_test_input_lstm.shape[1], 1))
+caterpillar_test_input_lstm_scaled = scaler_caterpillar.transform(caterpillar_test_input_lstm.reshape(-1, 1)).reshape(caterpillar_test_input_lstm.shape)
 
-# Invert the scaling on both predictions and target values
-caterpillar_train_predictions = scaler.inverse_transform(caterpillar_train_predictions)
-cat_train_original_scale = scaler.inverse_transform(caterpillar_train_output_lstm.reshape(-1,1))
+# Make predictions on the TEST data
+caterpillar_test_predictions = lstm_model.predict(caterpillar_test_input_lstm_scaled)
+caterpillar_test_predictions = caterpillar_test_predictions.reshape(-1, 1)
 
-# Compare the last predicted value with the last actual value in the training set
-print("Train Predictions:", caterpillar_train_predictions[-1])
-print("Train Actual:", cat_train_original_scale[-1])
+# Invert the scaling on predictions
+caterpillar_test_predictions = scaler_caterpillar.inverse_transform(caterpillar_test_predictions)
 
-# Plot fitted data against training data
-# Convert to a Series with the correct index
-caterpillar_predictions_lstm = pd.Series(caterpillar_train_predictions[-32:].flatten(), index=caterpillar_train_ml.index[-32:])
+print("LSTM Test Predictions (first 5):", caterpillar_test_predictions[:5].flatten())
+print("LSTM Test Actual (first 5):", caterpillar_test_ml.values[:5])
+
+# Plot forecast against TEST data
+caterpillar_predictions_lstm = pd.Series(caterpillar_test_predictions.flatten()[:len(caterpillar_test_ml)], index=caterpillar_test_ml.index)
 
 # Plot
 plt.figure(figsize=(12, 6))
-plt.plot(caterpillar_train_ml.index[-32:].to_timestamp(), caterpillar_train_ml[-32:], label='Caterpillar Training Data')
-plt.plot(caterpillar_train_ml.index[-32:].to_timestamp(), caterpillar_predictions_lstm[-32:], label='Caterpillar Fitted Values')
+plt.plot(caterpillar_test_ml.index, caterpillar_test_ml, label='Caterpillar Test Data (Actual)')
+plt.plot(caterpillar_predictions_lstm.index, caterpillar_predictions_lstm, label='Caterpillar LSTM Forecast')
 plt.legend()
-plt.show()
+plt.title('LSTM Forecast vs Actual - The Very Hungry Caterpillar (FIXED)')
+plt.savefig('results/plots/02_lstm_caterpillar_forecast.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/02_lstm_caterpillar_forecast.png")
 
-# MAE and MAPE values
-mae_caterpillar = mean_absolute_error(caterpillar_train_ml[-32:], caterpillar_predictions_lstm[-32:])
-print("MAE:", mae_caterpillar)
+# MAE and MAPE values - NOW ON TEST DATA
+mae_caterpillar = mean_absolute_error(caterpillar_test_ml[:len(caterpillar_predictions_lstm)], caterpillar_predictions_lstm)
+print("LSTM MAE (Caterpillar):", mae_caterpillar)
 
-mape_caterpillar = mean_absolute_percentage_error(caterpillar_train_ml[-32:], caterpillar_predictions_lstm[-32:])
-print("MAPE:", mape_caterpillar)
+mape_caterpillar = mean_absolute_percentage_error(caterpillar_test_ml[:len(caterpillar_predictions_lstm)], caterpillar_predictions_lstm)
+print("LSTM MAPE (Caterpillar):", mape_caterpillar)
 
 # Optuna-based LSTM hyperparameter tuning
-def build_lstm_model_with_params(units: int, dropout_rate: float) -> Sequential:
+def build_lstm_model_with_params(units: int, dropout_rate: float, forecast_steps: int = 32) -> Sequential:
+    """Build LSTM model with given hyperparameters for multi-step forecasting"""
     model = Sequential()
     model.add(LSTM(units=units, input_shape=(52, 1), return_sequences=True))
     model.add(Dropout(dropout_rate))
     model.add(LSTM(units=units))
     model.add(Dropout(dropout_rate))
-    model.add(Dense(1))
+    model.add(Dense(forecast_steps))  # FIXED: Output 32 steps, not 1
     model.compile(loss='mse', optimizer='adam')
     return model
 
 def optuna_objective_alchemist(trial: optuna.Trial) -> float:
     units = trial.suggest_int('units', 32, 128, step=16)
     dropout = trial.suggest_float('dropout', 0.1, 0.5, step=0.1)
-    model = build_lstm_model_with_params(units, dropout)
+    model = build_lstm_model_with_params(units, dropout, forecast_steps=32)
 
-    # Prepare data
+    # Prepare data - FIXED: Use all 32 outputs, not just last step
     sequence_data_local = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=alchemist_train_lstm)
     X = np.array(sequence_data_local["input_sequences"])  # shape: (samples, 52, 1)
-    y = np.array(sequence_data_local["output_sequences"])[:, -1]  # predict last step
+    y = np.array(sequence_data_local["output_sequences"])  # FIXED: All 32 steps
 
     history = model.fit(
         X, y,
@@ -880,11 +981,11 @@ def optuna_objective_alchemist(trial: optuna.Trial) -> float:
 def optuna_objective_caterpillar(trial: optuna.Trial) -> float:
     units = trial.suggest_int('units', 32, 128, step=16)
     dropout = trial.suggest_float('dropout', 0.1, 0.5, step=0.1)
-    model = build_lstm_model_with_params(units, dropout)
+    model = build_lstm_model_with_params(units, dropout, forecast_steps=32)
 
     sequence_data_local = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=caterpillar_train_lstm)
     X = np.array(sequence_data_local["input_sequences"])  # shape: (samples, 52, 1)
-    y = np.array(sequence_data_local["output_sequences"])[:, -1]
+    y = np.array(sequence_data_local["output_sequences"])  # FIXED: All 32 steps
 
     history = model.fit(
         X, y,
@@ -910,51 +1011,77 @@ best_units_cat = study_cat.best_params['units']
 best_dropout_cat = study_cat.best_params['dropout']
 print(f"Best Caterpillar params: units={best_units_cat}, dropout={best_dropout_cat}")
 
-# Build models with best params
-alchemist_best_model = build_lstm_model_with_params(best_units_alc, best_dropout_alc)
+# FIXED: Build models with best params AND TRAIN THEM
+print("\nTraining Optuna-optimized models...")
+alchemist_best_model = build_lstm_model_with_params(best_units_alc, best_dropout_alc, forecast_steps=32)
 
-# Reshape the input data to have the correct dimensions for LSTM
-alchemist_train_lstm = alchemist_train_ml.values.reshape(-1, 1)
+# Prepare training data properly
+alchemist_train_lstm_optuna = alchemist_train_ml.values.reshape(-1, 1)
+seq_data_alc = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=alchemist_train_lstm_optuna)
+X_train_alc = np.array(seq_data_alc["input_sequences"])
+y_train_alc = np.array(seq_data_alc["output_sequences"])
 
-# Create overlapping windows for prediction
-window_size = 32  # Adjust as needed
-alchemist_input_sequences = []
-for i in range(len(alchemist_train_lstm) - window_size + 1):
-    alchemist_input_sequences.append(alchemist_train_lstm[i:i + window_size])
+# FIXED: Add scaling for Optuna models (was missing!)
+scaler_optuna_alc = StandardScaler()
+X_train_alc_scaled = scaler_optuna_alc.fit_transform(X_train_alc.reshape(-1, 1)).reshape(X_train_alc.shape)
+y_train_alc_scaled = scaler_optuna_alc.transform(y_train_alc.reshape(-1, 1)).reshape(y_train_alc.shape)
 
-alchemist_input_sequences = np.array(alchemist_input_sequences)
-alchemist_input_sequences = alchemist_input_sequences.reshape(alchemist_input_sequences.shape[0], alchemist_input_sequences.shape[1], 1)
+# FIXED: Actually train the model on SCALED data
+alchemist_best_model.fit(X_train_alc_scaled, y_train_alc_scaled, epochs=30, batch_size=32, verbose=0)
 
-alchemist_forecast = alchemist_best_model.predict(alchemist_input_sequences)
+# FIXED: Create test sequence and predict on TEST data
+full_data_alc = np.concatenate([alchemist_train_lstm_optuna, alchemist_test_ml.values.reshape(-1, 1)])
+seq_data_test_alc = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=full_data_alc)
+X_test_alc = np.array(seq_data_test_alc["input_sequences"])[-1:]  # Last sequence for forecasting
+
+# Scale test data and predict
+X_test_alc_scaled = scaler_optuna_alc.transform(X_test_alc.reshape(-1, 1)).reshape(X_test_alc.shape)
+alchemist_forecast_optuna_scaled = alchemist_best_model.predict(X_test_alc_scaled, verbose=0)
+
+# FIXED: Inverse transform predictions
+alchemist_forecast_optuna = scaler_optuna_alc.inverse_transform(alchemist_forecast_optuna_scaled.reshape(-1, 1)).flatten()
 
 # Caterpillar model with best Optuna params
-caterpillar_best_model = build_lstm_model_with_params(best_units_cat, best_dropout_cat)
+caterpillar_best_model = build_lstm_model_with_params(best_units_cat, best_dropout_cat, forecast_steps=32)
 
-# Reshape the input data for Caterpillar to have the correct dimensions for LSTM
-caterpillar_train_lstm = caterpillar_train_ml.values.reshape(-1, 1)
+# Prepare training data
+caterpillar_train_lstm_optuna = caterpillar_train_ml.values.reshape(-1, 1)
+seq_data_cat = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=caterpillar_train_lstm_optuna)
+X_train_cat = np.array(seq_data_cat["input_sequences"])
+y_train_cat = np.array(seq_data_cat["output_sequences"])
 
-# Create overlapping windows for prediction
-caterpillar_input_sequences = []
-for i in range(len(caterpillar_train_lstm) - window_size + 1):
-    caterpillar_input_sequences.append(caterpillar_train_lstm[i:i + window_size])
+# FIXED: Add scaling for Optuna models (was missing!)
+scaler_optuna_cat = StandardScaler()
+X_train_cat_scaled = scaler_optuna_cat.fit_transform(X_train_cat.reshape(-1, 1)).reshape(X_train_cat.shape)
+y_train_cat_scaled = scaler_optuna_cat.transform(y_train_cat.reshape(-1, 1)).reshape(y_train_cat.shape)
 
-caterpillar_input_sequences = np.array(caterpillar_input_sequences)
-caterpillar_input_sequences = caterpillar_input_sequences.reshape(caterpillar_input_sequences.shape[0], caterpillar_input_sequences.shape[1], 1)
+# FIXED: Actually train the model on SCALED data
+caterpillar_best_model.fit(X_train_cat_scaled, y_train_cat_scaled, epochs=30, batch_size=32, verbose=0)
 
-caterpillar_forecast = caterpillar_best_model.predict(caterpillar_input_sequences)
+# FIXED: Create test sequence and predict on TEST data
+full_data_cat = np.concatenate([caterpillar_train_lstm_optuna, caterpillar_test_ml.values.reshape(-1, 1)])
+seq_data_test_cat = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=full_data_cat)
+X_test_cat = np.array(seq_data_test_cat["input_sequences"])[-1:]  # Last sequence
+
+# Scale test data and predict
+X_test_cat_scaled = scaler_optuna_cat.transform(X_test_cat.reshape(-1, 1)).reshape(X_test_cat.shape)
+caterpillar_forecast_optuna_scaled = caterpillar_best_model.predict(X_test_cat_scaled, verbose=0)
+
+# FIXED: Inverse transform predictions
+caterpillar_forecast_optuna = scaler_optuna_cat.inverse_transform(caterpillar_forecast_optuna_scaled.reshape(-1, 1)).flatten()
 
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-# Alchemist performance
-alchemist_mae = mean_absolute_error(alchemist_train[-32:].values, alchemist_forecast)
-alchemist_rmse = np.sqrt(mean_squared_error(alchemist_train[-32:].values, alchemist_forecast))
-alchemist_mape = np.mean(np.abs((alchemist_train.values[-32:] - alchemist_forecast) / alchemist_train[-32:].values))
-print(f'The Alchemist - MAE: {alchemist_mae}, RMSE: {alchemist_rmse}', f'MAPE: {alchemist_mape}')
+# FIXED: Alchemist performance on TEST data
+alchemist_mae_optuna = mean_absolute_error(alchemist_test_ml.values, alchemist_forecast_optuna)
+alchemist_rmse_optuna = np.sqrt(mean_squared_error(alchemist_test_ml.values, alchemist_forecast_optuna))
+alchemist_mape_optuna = mean_absolute_percentage_error(alchemist_test_ml.values, alchemist_forecast_optuna)
+print(f'Optuna LSTM (Alchemist) - MAE: {alchemist_mae_optuna:.2f}, RMSE: {alchemist_rmse_optuna:.2f}, MAPE: {alchemist_mape_optuna:.4f}')
 
-# Repeat for The Very Hungry Caterpillar
-caterpillar_mae = mean_absolute_error(caterpillar_train[-32:].values, caterpillar_forecast)
-caterpillar_rmse = np.sqrt(mean_squared_error(caterpillar_train[-32:].values, caterpillar_forecast))
-caterpillar_mape = np.mean(np.abs((caterpillar_train[-32:].values - caterpillar_forecast) / caterpillar_train[-32:].values))
-print(f'The Very Hungry Caterpillar - MAE: {caterpillar_mae}, RMSE: {caterpillar_rmse}', f'MAPE: {caterpillar_mape}')
+# FIXED: Caterpillar performance on TEST data
+caterpillar_mae_optuna = mean_absolute_error(caterpillar_test_ml.values, caterpillar_forecast_optuna)
+caterpillar_rmse_optuna = np.sqrt(mean_squared_error(caterpillar_test_ml.values, caterpillar_forecast_optuna))
+caterpillar_mape_optuna = mean_absolute_percentage_error(caterpillar_test_ml.values, caterpillar_forecast_optuna)
+print(f'Optuna LSTM (Caterpillar) - MAE: {caterpillar_mae_optuna:.2f}, RMSE: {caterpillar_rmse_optuna:.2f}, MAPE: {caterpillar_mape_optuna:.4f}')
 
 def data_for_visualisations_lstm(original_data, predictions, forecast_horizon, train_index):
     existing_data = original_data.to_frame(name='Actual')  # Convert to DataFrame
@@ -976,15 +1103,19 @@ def data_for_visualisations_lstm(original_data, predictions, forecast_horizon, t
 
     return composed_data
 
-composed_data_alchemist = data_for_visualisations_lstm(alchemist_train_ml, alchemist_forecast, forecast_horizon, alchemist_train_ml.index)
+composed_data_alchemist = data_for_visualisations_lstm(alchemist_train_ml, alchemist_forecast_optuna, forecast_horizon, alchemist_train_ml.index)
 composed_data_alchemist.plot(figsize=(12, 6))
-plt.title('The Alchemist LSTM Forecast')
-plt.show()
+plt.title('The Alchemist LSTM Forecast (Optuna-optimized)')
+plt.savefig('results/plots/03_optuna_alchemist_forecast.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/03_optuna_alchemist_forecast.png")
 
-composed_data_caterpillar = data_for_visualisations_lstm(caterpillar_train_ml, caterpillar_forecast, forecast_horizon, caterpillar_train_ml.index)
+composed_data_caterpillar = data_for_visualisations_lstm(caterpillar_train_ml, caterpillar_forecast_optuna, forecast_horizon, caterpillar_train_ml.index)
 composed_data_caterpillar.plot(figsize=(12, 6))
-plt.title('The Very Hungry Caterpillar LSTM Forecast')
-plt.show()
+plt.title('The Very Hungry Caterpillar LSTM Forecast (Optuna-optimized)')
+plt.savefig('results/plots/04_optuna_caterpillar_forecast.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/04_optuna_caterpillar_forecast.png")
 
 # MAE and MAPE for both books
 def calculate_mae_mape(actual_data, forecast_data, forecast_horizon):
@@ -1002,10 +1133,10 @@ def calculate_mae_mape(actual_data, forecast_data, forecast_horizon):
 forecast_horizon = 32
 
 # Calculate MAE and MAPE for The Alchemist
-mae_alchemist, mape_alchemist = calculate_mae_mape(alchemist_test_ml, alchemist_forecast, forecast_horizon)
+mae_alchemist, mape_alchemist = calculate_mae_mape(alchemist_test_ml, alchemist_forecast_optuna, forecast_horizon)
 
 # Calculate MAE and MAPE for The Very Hungry Caterpillar
-mae_caterpillar, mape_caterpillar = calculate_mae_mape(caterpillar_test_ml, caterpillar_forecast, forecast_horizon)
+mae_caterpillar, mape_caterpillar = calculate_mae_mape(caterpillar_test_ml, caterpillar_forecast_optuna, forecast_horizon)
 
 print("Alchemist MAE:", mae_alchemist)
 print("Alchemist MAPE:", mape_alchemist)
@@ -1077,116 +1208,109 @@ def create_input_output_sequences(lookback, forecast, sequence_data):
 # # Get the best model
 # best_model = hybrid_tuner.get_best_models(num_models=1)[0]
 
-# Ensure default LSTM builder is available (in case earlier definition changes)
-if 'create_default_lstm_model' not in globals():
-    def create_default_lstm_model():
-        model = Sequential()
-        model.add(LSTM(units=80, input_shape=(52, 1), return_sequences=True))
-        model.add(Dropout(0.2))
-        model.add(LSTM(units=80))
-        model.add(Dropout(0.2))
-        model.add(Dense(1))
-        model.compile(loss='mse', optimizer='adam')
-        return model
+# FIXED: Create hybrid model that outputs 32 residual forecasts, not 1
+# PHASE 2: Simplified to 2 layers with increased dropout
+def create_hybrid_lstm_model(forecast_steps=32):
+    """
+    LSTM model for forecasting residuals (multi-step output)
+    PHASE 2: Simplified architecture with 2 layers and dropout 0.3
+    """
+    model = Sequential()
+    model.add(LSTM(units=50, input_shape=(52, 1), return_sequences=True))
+    model.add(Dropout(0.3))  # PHASE 2: Increased from 0.2 to 0.3
+    model.add(LSTM(units=50))
+    model.add(Dropout(0.3))  # PHASE 2: Increased from 0.2 to 0.3
+    model.add(Dense(forecast_steps))  # FIXED: Output 32 residuals, not 1
+    model.compile(loss='mse', optimizer='adam')
+    return model
 
-# Use default LSTM model instead (Optuna focuses on primary LSTM models)
-best_model = create_default_lstm_model()
+# Build and train hybrid model on residuals
+hybrid_model = create_hybrid_lstm_model(forecast_steps=32)
 
-lookback = 32
-forecast_horizon = 32
+# Prepare residual sequences for training
+residuals_reshaped = residuals.values.reshape(-1, 1)
+seq_residuals = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=residuals_reshaped)
+X_residuals = np.array(seq_residuals["input_sequences"])
+y_residuals = np.array(seq_residuals["output_sequences"])
 
-best_model.fit(alchemist_residuals_train_input, alchemist_residuals_train_output, epochs=50)
+# PHASE 2: Train with early stopping
+early_stop_hybrid = EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True, verbose=1)
+hybrid_model.fit(X_residuals, y_residuals, epochs=50, batch_size=32,
+                 validation_split=0.2, callbacks=[early_stop_hybrid], verbose=0)
 
-# Get the forecasted values and confidence intervals for the next 32 weeks
-forecast_alchemist = auto_arima_model_alchemist.predict(n_periods=forecast_horizon, return_conf_int=True, alpha=0.05)
+# FIXED: Get SARIMA forecast for test period
+sarima_predictions = auto_arima_model_alchemist.predict(n_periods=32)
 
-# Extract the predicted mean values
-sarima_predictions = forecast_alchemist[0]
+# FIXED: Create proper residual forecast for 32 periods
+# Use last 52 residuals to forecast next 32
+last_residuals = residuals.values[-52:].reshape(1, 52, 1)
+lstm_residual_forecast = hybrid_model.predict(last_residuals, verbose=0).flatten()
 
-sarima_predictions = auto_arima_model_alchemist.predict(n_periods=forecast_horizon)
+# FIXED: Combine SARIMA forecast + LSTM residual forecast (both 32 values)
+final_predictions = sarima_predictions + lstm_residual_forecast
 
-sarima_predictions = pd.Series(
-    sarima_predictions,
-    index=pd.date_range(
-        start=alchemist_train.index[-1],
-        periods=forecast_horizon,
-        freq="W"
-    ),
-    name="Volume",
-)
+mae_hybrid = mean_absolute_error(alchemist_test, final_predictions)
+mape_hybrid = mean_absolute_percentage_error(alchemist_test, final_predictions)
+print(f"Sequential Hybrid (Alchemist) - MAE: {mae_hybrid:.2f}, MAPE: {mape_hybrid:.4f}")
 
-lstm_predictions = best_model.predict(alchemist_residuals_train_input)
-
-from typing_extensions import final
-# Get the last prediction from the LSTM model
-lstm_predictions = lstm_predictions[-1]
-
-final_predictions = sarima_predictions + lstm_predictions
-final_predictions.isna().sum()
-final_predictions.fillna(1, inplace=True)
-
-mae = mean_absolute_error(alchemist_test, final_predictions)
-mape = mean_absolute_percentage_error(alchemist_test, final_predictions)
-print(f"MAE: {mae}, MAPE: {mape}")
-
+plt.figure(figsize=(12, 6))
 plt.plot(alchemist_test.index, alchemist_test, label='Actual')
 plt.plot(alchemist_test.index, final_predictions, label='Hybrid Forecast')
-plt.title('Hybrid Forecast for The Alchemist - Sequential')
+plt.title('Hybrid Forecast for The Alchemist - Sequential (SARIMA + LSTM)')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
-plt.show()
+plt.savefig('results/plots/05_sequential_hybrid_alchemist.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/05_sequential_hybrid_alchemist.png")
 
-# Sequential Hybrid Model for The Very Hungry Caterpillar
-# Fit SARIMA to Caterpillar data
-best_sarima_model_caterpillar = auto_arima_model_caterpillar
+# FIXED: Sequential Hybrid Model for The Very Hungry Caterpillar
+caterpillar_residuals = auto_arima_model_caterpillar.resid()
 
-# Get SARIMA residuals for LSTM training
-caterpillar_residuals = best_sarima_model_caterpillar.resid()
-caterpillar_residuals = pd.Series(caterpillar_residuals, index=caterpillar_train.index)
-residuals_caterpillar = caterpillar_train - caterpillar_residuals
+# Build and train hybrid model on caterpillar residuals
+hybrid_model_cat = create_hybrid_lstm_model(forecast_steps=32)
 
-# Prepare LSTM input/output for Caterpillar residuals
-lookback = 52
-forecast_horizon = 32
-caterpillar_residuals_train_input, caterpillar_residuals_train_output = create_input_output_sequences(lookback, 1, residuals_caterpillar.ravel())
+# Prepare residual sequences
+cat_residuals_reshaped = caterpillar_residuals.values.reshape(-1, 1)
+seq_cat_residuals = create_input_sequences_lstm(lookback=52, forecast=32, sequence_data=cat_residuals_reshaped)
+X_cat_residuals = np.array(seq_cat_residuals["input_sequences"])
+y_cat_residuals = np.array(seq_cat_residuals["output_sequences"])
 
-# Scale for model
-scaler = StandardScaler()
-caterpillar_residuals_train_input = scaler.fit_transform(caterpillar_residuals_train_input)
-caterpillar_residuals_train_output = scaler.fit_transform(caterpillar_residuals_train_output.reshape(-1, 1))
+# PHASE 2: Train with early stopping
+early_stop_hybrid_cat = EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True, verbose=1)
+hybrid_model_cat.fit(X_cat_residuals, y_cat_residuals, epochs=50, batch_size=32,
+                     validation_split=0.2, callbacks=[early_stop_hybrid_cat], verbose=0)
 
-# Tune and fit LSTM on Caterpillar residuals - USING DEFAULT MODEL
-# tuner_caterpillar = RandomSearch(tuned_model, objective='val_loss', max_trials=5, executions_per_trial=3, directory='my_dir', project_name='lstm_tuning_caterpillar')
-# tuner_caterpillar.search(caterpillar_residuals_train_input, caterpillar_residuals_train_output, epochs=10, validation_split=0.2)
-# best_lstm_model_caterpillar = tuner_caterpillar.get_best_models(num_models=1)[0]
-best_lstm_model_caterpillar = create_default_lstm_model()
-best_lstm_model_caterpillar.fit(caterpillar_residuals_train_input, caterpillar_residuals_train_output, epochs=20)
+# FIXED: Get SARIMA forecast
+sarima_forecast_caterpillar = auto_arima_model_caterpillar.predict(n_periods=32)
 
-# Make predictions
-sarima_forecast_caterpillar = best_sarima_model_caterpillar.predict(n_periods=forecast_horizon)
-lstm_forecast_caterpillar = best_lstm_model_caterpillar.predict(caterpillar_residuals_train_input[-1].reshape(1, lookback, 1)).flatten()
+# FIXED: Forecast residuals for 32 periods
+last_cat_residuals = caterpillar_residuals.values[-52:].reshape(1, 52, 1)
+lstm_cat_residual_forecast = hybrid_model_cat.predict(last_cat_residuals, verbose=0).flatten()
 
-# Combine forecasts
-hybrid_forecast_caterpillar = sarima_forecast_caterpillar + lstm_forecast_caterpillar
+# FIXED: Combine forecasts (both 32 values)
+hybrid_forecast_caterpillar = sarima_forecast_caterpillar + lstm_cat_residual_forecast
 
 # Calculate Errors for hybrid Caterpillar Model
-mae = mean_absolute_error(caterpillar_test, hybrid_forecast_caterpillar)
-mape = mean_absolute_percentage_error(caterpillar_test, hybrid_forecast_caterpillar)
-print(f"MAE: {mae}, MAPE: {mape}")
+mae_hybrid_cat = mean_absolute_error(caterpillar_test, hybrid_forecast_caterpillar)
+mape_hybrid_cat = mean_absolute_percentage_error(caterpillar_test, hybrid_forecast_caterpillar)
+print(f"Sequential Hybrid (Caterpillar) - MAE: {mae_hybrid_cat:.2f}, MAPE: {mape_hybrid_cat:.4f}")
 
 caterpillar_test_lstm_hybrid = caterpillar_test.copy()
 
 # Now create the Series
 caterpillar_test_lstm_hybrid = pd.Series(caterpillar_test_lstm_hybrid, index=caterpillar_test.index)
 
+plt.figure(figsize=(12, 6))
 plt.plot(caterpillar_test_lstm_hybrid.index, caterpillar_test_lstm_hybrid, label='Actual')
 plt.plot(caterpillar_test_lstm_hybrid.index, hybrid_forecast_caterpillar, label='Hybrid Forecast')
-plt.title('Hybrid Forecast for Caterpillar - Sequential')
+plt.title('Hybrid Forecast for Caterpillar - Sequential (SARIMA + LSTM)')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
-plt.show()
+plt.savefig('results/plots/06_sequential_hybrid_caterpillar.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/06_sequential_hybrid_caterpillar.png")
 
 # Parallel Hybrid Model
 # Using the best SARIMA model using auto_arima
@@ -1226,9 +1350,20 @@ def build_lstm_model(hp):
     model.compile(loss='mean_squared_error', optimizer='adam')
     return model
 
-# Parallel hybrid: use default small model to keep runtime reasonable
-best_lstm_model = create_default_lstm_model()
-best_lstm_model.fit(X_train.reshape(X_train.shape[0], X_train.shape[1], 1), y_train, epochs=10, validation_split=0.2)
+# Parallel hybrid: use simple LSTM model
+def create_simple_parallel_lstm():
+    """Simple LSTM for parallel hybrid model"""
+    model = Sequential()
+    model.add(LSTM(units=50, activation='relu', input_shape=(52, 1)))
+    model.add(Dropout(0.3))
+    model.add(Dense(1))
+    model.compile(loss='mean_squared_error', optimizer='adam')
+    return model
+
+best_lstm_model = create_simple_parallel_lstm()
+early_stop_parallel = EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True, verbose=0)
+best_lstm_model.fit(X_train.reshape(X_train.shape[0], X_train.shape[1], 1), y_train,
+                    epochs=50, validation_split=0.2, callbacks=[early_stop_parallel], verbose=0)
 
 # Forecast using the trained LSTM model
 inputs = train_scaled[-look_back:]  # Last 'look_back' values as input
@@ -1255,11 +1390,16 @@ print(f"MAE: {mae:.2f}")
 print(f"MAPE: {mape:.2f}")
 
 # Plot the results
+plt.figure(figsize=(12, 6))
 plt.plot(alchemist_test.index, alchemist_test, label='Actual')
 plt.plot(alchemist_test.index, hybrid_forecast, label='Hybrid Forecast')
 plt.legend()
-plt.title('Parallel Hybrid Model Forecast - The Alchemist')
-plt.show()
+plt.title('Parallel Hybrid Model Forecast - The Alchemist (Weighted SARIMA+LSTM)')
+plt.xlabel('Date')
+plt.ylabel('Sales Volume')
+plt.savefig('results/plots/07_parallel_hybrid_alchemist.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/07_parallel_hybrid_alchemist.png")
 
 # Search the weights to find the best forecast
 weights = [(x, 1-x) for x in np.arange(0, 1.1, 0.1)]
@@ -1307,14 +1447,31 @@ plt.show()
 print(alchemist_train.index.freq)  # Should output 'W' or 'W-SUN' for correct weekly frequency
 print(caterpillar_train.index.freq)
 
+# Convert PeriodIndex to DatetimeIndex if needed (for monthly aggregation compatibility)
+if isinstance(alchemist_train.index, pd.PeriodIndex):
+    alchemist_train.index = alchemist_train.index.to_timestamp()
+if isinstance(caterpillar_train.index, pd.PeriodIndex):
+    caterpillar_train.index = caterpillar_train.index.to_timestamp()
+
 # Aggregate the weekly sales data to monthly sales data for both books
 alchemist_monthly = alchemist_train.groupby(pd.Grouper(freq='MS')).sum()
 caterpillar_monthly = caterpillar_train.groupby(pd.Grouper(freq='MS')).sum()
 
+# FIXED: Split monthly data into train/test (80/20 split)
+split_point = int(len(alchemist_monthly) * 0.8)
+alchemist_monthly_train = alchemist_monthly[:split_point]
+alchemist_monthly_test = alchemist_monthly[split_point:]
+
+caterpillar_monthly_train = caterpillar_monthly[:split_point]
+caterpillar_monthly_test = caterpillar_monthly[split_point:]
+
 # Train the XGBoost model on this data
 import xgboost as xgb
 
-X_alchemist = alchemist_monthly.index.to_series().astype(int).values.reshape(-1, 1)
+# FIXED: Train only on TRAINING data
+X_alchemist_train = alchemist_monthly_train.index.to_series().astype(int).values.reshape(-1, 1)
+X_alchemist_test = alchemist_monthly_test.index.to_series().astype(int).values.reshape(-1, 1)
+
 alchemist_monthly_xgb = xgb.XGBRegressor(objective='reg:squarederror',
                                          n_estimators=200,
                                          max_depth=3,
@@ -1322,9 +1479,12 @@ alchemist_monthly_xgb = xgb.XGBRegressor(objective='reg:squarederror',
                                          booster='gbtree',
                                          tree_method='exact')
 
-alchemist_monthly_xgb.fit(X_alchemist, alchemist_monthly.values)
+alchemist_monthly_xgb.fit(X_alchemist_train, alchemist_monthly_train.values)
 
-X_caterpillar = caterpillar_monthly.index.to_series().astype(int).values.reshape(-1, 1)
+# FIXED: Train only on TRAINING data
+X_caterpillar_train = caterpillar_monthly_train.index.to_series().astype(int).values.reshape(-1, 1)
+X_caterpillar_test = caterpillar_monthly_test.index.to_series().astype(int).values.reshape(-1, 1)
+
 caterpillar_monthly_xgb = xgb.XGBRegressor(objective='reg:squarederror',
                                          n_estimators=200,
                                          max_depth=3,
@@ -1333,39 +1493,47 @@ caterpillar_monthly_xgb = xgb.XGBRegressor(objective='reg:squarederror',
                                          tree_method='exact',
                                          reg_alpha=1,
                                          reg_lambda=1)
-caterpillar_monthly_xgb.fit(X_caterpillar, caterpillar_monthly.values)
+caterpillar_monthly_xgb.fit(X_caterpillar_train, caterpillar_monthly_train.values)
 
-# Plot the results
+# Plot the results - FIXED: Show train data + test predictions only
 plt.figure(figsize=(12, 6))
-plt.plot(alchemist_monthly.index, alchemist_monthly, label='Actual')
-plt.plot(alchemist_monthly.index, alchemist_monthly_xgb.predict(X_alchemist), label='Monthly Forecast')
-plt.title('Monthly Forecast for The Alchemist')
+plt.plot(alchemist_monthly_train.index, alchemist_monthly_train, label='Training Data', color='blue')
+plt.plot(alchemist_monthly_test.index, alchemist_monthly_test, label='Test Data (Actual)', color='green')
+plt.plot(alchemist_monthly_test.index, alchemist_monthly_xgb.predict(X_alchemist_test),
+         label='Test Forecast', color='red', linestyle='--')
+plt.title('Monthly XGBoost Forecast for The Alchemist (Test Set)')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
-plt.show()
+plt.savefig('results/plots/08_monthly_xgboost_alchemist.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/08_monthly_xgboost_alchemist.png")
 
 plt.figure(figsize=(12,6))
-plt.plot(caterpillar_monthly.index, caterpillar_monthly, label='Actual')
-plt.plot(caterpillar_monthly.index, caterpillar_monthly_xgb.predict(X_caterpillar), label='Monthly Forecast')
-plt.title('Monthly Forecast for The Very Hungry Caterpillar')
+plt.plot(caterpillar_monthly_train.index, caterpillar_monthly_train, label='Training Data', color='blue')
+plt.plot(caterpillar_monthly_test.index, caterpillar_monthly_test, label='Test Data (Actual)', color='green')
+plt.plot(caterpillar_monthly_test.index, caterpillar_monthly_xgb.predict(X_caterpillar_test),
+         label='Test Forecast', color='red', linestyle='--')
+plt.title('Monthly XGBoost Forecast for The Very Hungry Caterpillar (Test Set)')
 plt.xlabel('Date')
 plt.ylabel('Sales Volume')
 plt.legend()
-plt.show()
+plt.savefig('results/plots/09_monthly_xgboost_caterpillar.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("✓ Saved: results/plots/09_monthly_xgboost_caterpillar.png")
 
-# MAE & MAPE
-mae_alchemist_monthly = mean_absolute_error(alchemist_monthly, alchemist_monthly_xgb.predict(X_alchemist))
-mape_alchemist_monthly = mean_absolute_percentage_error(alchemist_monthly, alchemist_monthly_xgb.predict(X_alchemist))
+# MAE & MAPE - FIXED: Evaluate on TEST data only
+mae_alchemist_monthly = mean_absolute_error(alchemist_monthly_test, alchemist_monthly_xgb.predict(X_alchemist_test))
+mape_alchemist_monthly = mean_absolute_percentage_error(alchemist_monthly_test, alchemist_monthly_xgb.predict(X_alchemist_test))
 
-mae_caterpillar_monthly = mean_absolute_error(caterpillar_monthly, caterpillar_monthly_xgb.predict(X_caterpillar))
-mape_caterpillar_monthly = mean_absolute_percentage_error(caterpillar_monthly, caterpillar_monthly_xgb.predict(X_caterpillar))
+mae_caterpillar_monthly = mean_absolute_error(caterpillar_monthly_test, caterpillar_monthly_xgb.predict(X_caterpillar_test))
+mape_caterpillar_monthly = mean_absolute_percentage_error(caterpillar_monthly_test, caterpillar_monthly_xgb.predict(X_caterpillar_test))
 
-print("Alchemist Monthly MAE:", mae_alchemist_monthly)
-print("Alchemist Monthly MAPE:", mape_alchemist_monthly)
+print("Alchemist Monthly XGBoost (Test Set) - MAE:", mae_alchemist_monthly)
+print("Alchemist Monthly XGBoost (Test Set) - MAPE:", mape_alchemist_monthly)
 
-print("Caterpillar Monthly MAE:", mae_caterpillar_monthly)
-print("Caterpillar Monthly MAPE:", mape_caterpillar_monthly)
+print("Caterpillar Monthly XGBoost (Test Set) - MAE:", mae_caterpillar_monthly)
+print("Caterpillar Monthly XGBoost (Test Set) - MAPE:", mape_caterpillar_monthly)
 
 # Aggregate weekly data to monthly data
 alchemist_monthly = alchemist['Volume'].resample('MS').sum()  # 'MS' for start of month
@@ -1481,10 +1649,20 @@ def main():
     print("- Both books show seasonal patterns")
     print("- Hybrid models generally outperform individual models")
     print("- Monthly forecasts provide different insights than weekly forecasts")
-    
-    # Save plots to results directory
-    plt.savefig('results/plots/final_analysis.png', dpi=300, bbox_inches='tight')
-    print("\nPlots saved to results/plots/ directory")
+
+    print("\n" + "=" * 50)
+    print("ALL PLOTS SAVED TO: results/plots/")
+    print("=" * 50)
+    print("📊 9 visualization files created:")
+    print("  01_lstm_alchemist_forecast.png")
+    print("  02_lstm_caterpillar_forecast.png")
+    print("  03_optuna_alchemist_forecast.png")
+    print("  04_optuna_caterpillar_forecast.png")
+    print("  05_sequential_hybrid_alchemist.png")
+    print("  06_sequential_hybrid_caterpillar.png")
+    print("  07_parallel_hybrid_alchemist.png")
+    print("  08_monthly_xgboost_alchemist.png")
+    print("  09_monthly_xgboost_caterpillar.png")
 
 if __name__ == "__main__":
     main()
