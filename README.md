@@ -80,27 +80,39 @@ pip install -r requirements.txt
    - Aggregated weekly data to monthly
    - XGBoost and SARIMA models for 8-month forecasts
 
-### Running the Script
+### Running the Analysis
 
 ```bash
-python time_series_forecasting_analysis.py
+python run_analysis.py
+```
+
+### Running Tests
+
+```bash
+python -m pytest tests/ -v
 ```
 
 ## Project Structure
 
 ```
 time-series-forecasting/
-├── README.md
+├── run_analysis.py              # Entry point — runs the full pipeline
+├── config.py                    # All constants and book definitions
+├── data_loader.py               # Data loading, preprocessing, book extraction
+├── models.py                    # Model builders, training functions, evaluation
+├── pipeline.py                  # Orchestration: per-book model loop, plots, summary
+├── bootstrap.py                 # Environment setup script
 ├── requirements.txt
-├── .gitignore
-├── LICENSE
+├── tests/
+│   ├── conftest.py              # Shared fixtures
+│   ├── test_data_loader.py
+│   └── test_models.py
 ├── data/
 │   ├── UK_Weekly_Trended_Timeline_from_200101_202429.xlsx
 │   └── ISBN_List.xlsx
-├── time_series_forecasting_analysis.py
-└── results/
-    ├── plots/
-    └── models/
+├── docs/                        # Phase summaries, contribution guide, historical scripts
+├── results/plots/               # Generated forecast visualizations (9 PNGs)
+└── time_series_forecasting_analysis_original.py  # Frozen original script
 ```
 
 ## Key Results
