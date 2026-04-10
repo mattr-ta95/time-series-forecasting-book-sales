@@ -129,10 +129,10 @@ dmypy.json
 .pyre/
 
 # Project-specific files
-# Data files (uncomment if you want to exclude data)
-# data/
-# *.xlsx
-# *.csv
+# Data files — Nielsen BookScan is proprietary; never commit raw data
+data/*.xlsx
+data/*.csv
+data/*.parquet
 
 # Model files
 models/
