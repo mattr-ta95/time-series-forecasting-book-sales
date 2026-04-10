@@ -1,15 +1,13 @@
 """Model definitions, training functions, and evaluation utilities."""
 
-import os
-
 import joblib
 import numpy as np
 import optuna
 import pandas as pd
 from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
-from keras.callbacks import EarlyStopping
-from keras.layers import LSTM, Dense, Dropout
-from keras.models import Sequential
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.models import Sequential
 from pmdarima.arima import auto_arima
 from sklearn.metrics import (
     mean_absolute_error,
@@ -47,7 +45,6 @@ from config import (
     OPTUNA_RETRAIN_EPOCHS,
     OPTUNA_TRIALS,
     PARALLEL_SARIMA_WEIGHT,
-    XGB_GRID_WINDOW_LENGTHS,
     XGB_LEARNING_RATE,
     XGB_MAX_DEPTH,
     XGB_N_ESTIMATORS,
@@ -180,13 +177,37 @@ def walk_forward_validation(train_set, test_set):
     return error, np.asarray(test_output).flatten(), predictions
 
 
-def create_predictor_with_deseasonaliser_xgboost(sp=12, degree=1):
-    """Create sktime pipeline with detrending and deseasonalization."""
+def create_predictor_with_deseasonaliser_xgboost(
+    sp=12,
+    degree=1,
+    max_depth=XGB_MAX_DEPTH,
+    gamma=0,
+    reg_alpha=0,
+    min_child_weight=1,
+    colsample_bytree=1,
+    n_estimators=600,
+):
+    """Create sktime pipeline with detrending and deseasonalization.
+
+    Accepts tuned XGB hyperparameters so Hyperopt's best params can be
+    threaded through to the internal XGBRegressor. Defaults preserve the
+    original un-tuned behaviour for backward compatibility.
+    """
     regressor = XGBRegressor(
-        base_score=0.5, n_estimators=600, min_child_weight=1, max_depth=XGB_MAX_DEPTH,
-        learning_rate=XGB_LEARNING_RATE, booster='gbtree', tree_method='exact',
-        reg_alpha=0, subsample=0.5, validate_parameters=1,
-        colsample_bylevel=1, colsample_bynode=1, colsample_bytree=1, gamma=0,
+        base_score=0.5,
+        n_estimators=n_estimators,
+        min_child_weight=min_child_weight,
+        max_depth=max_depth,
+        learning_rate=XGB_LEARNING_RATE,
+        booster='gbtree',
+        tree_method='exact',
+        reg_alpha=reg_alpha,
+        subsample=0.5,
+        validate_parameters=1,
+        colsample_bylevel=1,
+        colsample_bynode=1,
+        colsample_bytree=colsample_bytree,
+        gamma=gamma,
     )
     return TransformedTargetForecaster([
         ("deseasonalize", Deseasonalizer(model="additive", sp=sp)),
@@ -286,7 +307,7 @@ def run_xgboost(train, test, book_name):
     param_space = {
         'max_depth': hp.quniform("max_depth", 3, 18, 1),
         'gamma': hp.uniform('gamma', 0, 5),
-        'reg_alpha': hp.quniform('reg_alpha', 40, 180, 1),
+        'reg_alpha': hp.uniform('reg_alpha', 0, 10),
         'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1),
         'min_child_weight': hp.quniform('min_child_weight', 0, 10, 1),
         'n_estimators': XGB_N_ESTIMATORS,
@@ -302,10 +323,10 @@ def run_xgboost(train, test, book_name):
             n_estimators=params['n_estimators'],
             max_depth=int(params['max_depth']),
             gamma=params['gamma'],
-            reg_alpha=int(params['reg_alpha']),
+            reg_alpha=float(params['reg_alpha']),
             min_child_weight=int(params['min_child_weight']),
-            colsample_bytree=int(params['colsample_bytree']),
-            eval_metric="auc", early_stopping_rounds=10,
+            colsample_bytree=float(params['colsample_bytree']),
+            eval_metric="rmse", early_stopping_rounds=10,
         )
         evaluation = [(train_input, train_output), (test_input, test_output)]
         model.fit(train_input, train_output, eval_set=evaluation, verbose=False)
@@ -315,26 +336,33 @@ def run_xgboost(train, test, book_name):
         return {'loss': accuracy, 'status': STATUS_OK}
 
     trials = Trials()
-    fmin(fn=auto_tune, space=param_space, algo=tpe.suggest,
-         max_evals=HYPEROPT_MAX_EVALS, trials=trials)
+    best_raw = fmin(fn=auto_tune, space=param_space, algo=tpe.suggest,
+                    max_evals=HYPEROPT_MAX_EVALS, trials=trials)
 
-    # sktime grid search with deseasonalization pipeline
+    # Translate Hyperopt's best raw params into the kwargs expected by
+    # create_predictor_with_deseasonaliser_xgboost. fmin returns only the
+    # tuned values, so pull n_estimators from the fixed slot in param_space.
+    best_params = {
+        'max_depth': int(best_raw['max_depth']),
+        'gamma': float(best_raw['gamma']),
+        'reg_alpha': float(best_raw['reg_alpha']),
+        'min_child_weight': int(best_raw['min_child_weight']),
+        'colsample_bytree': float(best_raw['colsample_bytree']),
+        'n_estimators': int(param_space['n_estimators']),
+    }
+
+    # Persist best params so subsequent runs can skip tuning.
     params_file = f'best_xgb_params_{book_name}.pkl'
+    joblib.dump(best_params, params_file)
 
     # Copy to avoid mutating the original index
     train_period = train.copy()
     train_period.index = train_period.index.to_period('W')
 
-    if os.path.exists(params_file):
-        best_params = joblib.load(params_file)
-        predictor = create_predictor_with_deseasonaliser_xgboost(**best_params)
-        predictor.fit(train_period)
-        future_horizon = np.arange(len(test)) + 1
-        predictions = predictor.predict(fh=future_horizon)
-    else:
-        predictor = create_predictor_with_deseasonaliser_xgboost()
-        param_grid = {"forecast__window_length": XGB_GRID_WINDOW_LENGTHS}
-        predictions = grid_search_predictor(train_period, test, predictor, param_grid)
+    predictor = create_predictor_with_deseasonaliser_xgboost(**best_params)
+    predictor.fit(train_period)
+    future_horizon = np.arange(len(test)) + 1
+    predictions = predictor.predict(fh=future_horizon)
 
     return {'predictions': predictions}
 

@@ -18,9 +18,6 @@ python run_analysis.py
 
 # Tests
 python -m pytest tests/ -v
-
-# Original frozen script (for regression comparison)
-python time_series_forecasting_analysis_original.py
 ```
 
 Output goes to `results/plots/` (9 PNGs).
@@ -52,16 +49,6 @@ run_analysis.py          # Entry point (env vars, matplotlib backend)
 - Monthly ARIMA (8-month horizon)
 
 **Key parameters** are centralized in `config.py` — not scattered as magic numbers.
-
-## Critical Bug Fixes (Phase 1 & 2)
-
-Documented in `docs/phase1_summary.md` and `docs/phase2_summary.md`:
-
-1. **Data leakage** — metrics were computed on training data, not test set
-2. **Untrained Optuna models** — predictions used random weights
-3. **Double-scaling on Caterpillar** — separate scalers caused mismatch
-4. **Hybrid broadcasting** — single residual broadcast to 32 weeks instead of forecasting 32
-5. **LSTM overfitting** — reduced from 5×80 to 2×50 layers, added early stopping + CV
 
 ## Data Requirements
 
