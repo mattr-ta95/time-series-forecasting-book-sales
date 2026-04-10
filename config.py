@@ -22,6 +22,11 @@ SALES_FILE = 'UK_Weekly_Trended_Timeline_from_200101_202429.xlsx'
 ISBN_FILE = 'ISBN_List.xlsx'
 PLOT_DIR = 'results/plots'
 
+# Runtime artifact directories for the encoder-decoder LSTM showcase
+TB_LOG_DIR = 'results/tb_logs'
+SAVED_MODEL_DIR = 'results/saved_models'
+CHECKPOINT_DIR = 'results/checkpoints'
+
 # Time series parameters
 START_DATE = '2012-01-01'
 FORECAST_HORIZON_WEEKS = 32
@@ -57,6 +62,14 @@ HYBRID_EPOCHS = 50
 HYBRID_PATIENCE = 8
 PARALLEL_SARIMA_WEIGHT = 0.7
 
+# Encoder-decoder LSTM (with attention) parameters
+ENC_DEC_ENCODER_UNITS = 64
+ENC_DEC_DECODER_UNITS = 64
+ENC_DEC_VAL_SPLIT = 0.2
+ENC_DEC_LR_PATIENCE = 5
+ENC_DEC_LR_FACTOR = 0.5
+ENC_DEC_MIN_LR = 1e-5
+
 # Hyperopt tuning
 HYPEROPT_MAX_EVALS = 100
 
@@ -74,4 +87,6 @@ PLOT_NAMES = {
     ('par_hybrid', 'alchemist'): '07_parallel_hybrid_alchemist.png',
     ('monthly_xgb', 'alchemist'): '08_monthly_xgboost_alchemist.png',
     ('monthly_xgb', 'caterpillar'): '09_monthly_xgboost_caterpillar.png',
+    ('encoder_decoder', 'alchemist'): '10_encoder_decoder_alchemist_forecast.png',
+    ('encoder_decoder', 'caterpillar'): '11_encoder_decoder_caterpillar_forecast.png',
 }

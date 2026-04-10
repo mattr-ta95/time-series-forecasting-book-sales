@@ -1,13 +1,32 @@
 """Model definitions, training functions, and evaluation utilities."""
 
+import os
+from datetime import datetime
+
 import joblib
 import numpy as np
 import optuna
 import pandas as pd
+import tensorflow as tf
 from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TensorBoard,
+)
+from tensorflow.keras.layers import (
+    LSTM,
+    Attention,
+    Concatenate,
+    Dense,
+    Dropout,
+    Input,
+    RepeatVector,
+    Reshape,
+    TimeDistributed,
+)
+from tensorflow.keras.models import Model, Sequential
 from pmdarima.arima import auto_arima
 from sklearn.metrics import (
     mean_absolute_error,
@@ -27,7 +46,14 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from xgboost import XGBRegressor
 
 from config import (
+    CHECKPOINT_DIR,
     EARLY_STOP_PATIENCE,
+    ENC_DEC_DECODER_UNITS,
+    ENC_DEC_ENCODER_UNITS,
+    ENC_DEC_LR_FACTOR,
+    ENC_DEC_LR_PATIENCE,
+    ENC_DEC_MIN_LR,
+    ENC_DEC_VAL_SPLIT,
     FORECAST_HORIZON_WEEKS,
     HYBRID_EPOCHS,
     HYBRID_PATIENCE,
@@ -45,6 +71,8 @@ from config import (
     OPTUNA_RETRAIN_EPOCHS,
     OPTUNA_TRIALS,
     PARALLEL_SARIMA_WEIGHT,
+    SAVED_MODEL_DIR,
+    TB_LOG_DIR,
     XGB_LEARNING_RATE,
     XGB_MAX_DEPTH,
     XGB_N_ESTIMATORS,
@@ -486,6 +514,191 @@ def run_optuna_lstm(train, test, lookback=LOOKBACK_WEEKS, horizon=FORECAST_HORIZ
         'predictions': forecast,
         'metrics': metrics,
         'best_params': study.best_params,
+    }
+
+
+def build_encoder_decoder_model(
+    lookback=LOOKBACK_WEEKS,
+    horizon=FORECAST_HORIZON_WEEKS,
+    encoder_units=ENC_DEC_ENCODER_UNITS,
+    decoder_units=ENC_DEC_DECODER_UNITS,
+):
+    """Build an encoder-decoder LSTM with attention using the Keras Functional API.
+
+    Architecture:
+        - Encoder LSTM processes the input sequence, returning the full output
+          sequence plus final hidden and cell states.
+        - Decoder LSTM is seeded with the encoder's final state and a
+          RepeatVector of the encoder's final hidden state, producing a
+          ``horizon``-length output sequence.
+        - An ``Attention`` layer lets each decoder step attend over the full
+          encoder output sequence. Attention output is concatenated with the
+          decoder output before a ``TimeDistributed(Dense(1))`` head.
+        - Final ``Reshape`` flattens the horizon axis so the output shape is
+          ``(batch, horizon)`` — compatible with the existing pipeline metrics.
+
+    Args:
+        lookback: Number of historical timesteps fed into the encoder.
+        horizon: Number of future timesteps the decoder must emit.
+        encoder_units: LSTM units in the encoder layer.
+        decoder_units: LSTM units in the decoder layer.
+
+    Returns:
+        A compiled ``tf.keras.Model`` (Functional API, not Sequential).
+    """
+    encoder_inputs = Input(shape=(lookback, 1), name='encoder_input')
+    encoder_seq, state_h, state_c = LSTM(
+        encoder_units,
+        return_sequences=True,
+        return_state=True,
+        name='encoder_lstm',
+    )(encoder_inputs)
+
+    # Seed the decoder with the encoder's final hidden state, repeated across
+    # the forecast horizon. Pair it with [state_h, state_c] as initial state.
+    decoder_inputs = RepeatVector(horizon, name='decoder_repeat')(state_h)
+    decoder_seq = LSTM(
+        decoder_units,
+        return_sequences=True,
+        name='decoder_lstm',
+    )(decoder_inputs, initial_state=[state_h, state_c])
+
+    # Attention: query = decoder outputs, value = encoder outputs.
+    # Lets each decoder timestep look back over the entire input window.
+    context = Attention(name='attention')([decoder_seq, encoder_seq])
+    combined = Concatenate(axis=-1, name='decoder_concat')([decoder_seq, context])
+
+    # TimeDistributed projection then flatten the trailing unit dimension.
+    projected = TimeDistributed(Dense(1), name='output_projection')(combined)
+    outputs = Reshape((horizon,), name='output_reshape')(projected)
+
+    model = Model(inputs=encoder_inputs, outputs=outputs, name='encoder_decoder_lstm')
+    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+    return model
+
+
+def run_encoder_decoder_lstm(
+    train,
+    test,
+    lookback=LOOKBACK_WEEKS,
+    horizon=FORECAST_HORIZON_WEEKS,
+):
+    """Train an encoder-decoder LSTM with attention and forecast the test window.
+
+    Demonstrates the full TensorFlow deep-learning toolkit: Functional API
+    seq2seq model, ``tf.data`` input pipeline, rich callback set (early
+    stopping, LR schedule, TensorBoard, model checkpointing), and a
+    SavedModel artifact.
+    """
+    train_values = train.values.reshape(-1, 1)
+    test_values = test.values.reshape(-1, 1)
+
+    # Build sequences from training data (strictly no leakage from test)
+    seq_data = create_input_sequences_lstm(lookback, horizon, sequence_data=train_values)
+    X_all = np.array(seq_data['input_sequences'], dtype=np.float32)
+    y_all = np.array(seq_data['output_sequences'], dtype=np.float32)
+
+    # Flatten the trailing dim so target shape matches model output (None, horizon)
+    y_all = y_all.reshape(y_all.shape[0], y_all.shape[1])
+
+    # Scale inputs and outputs with a single shared scaler (same trick as run_lstm)
+    scaler = StandardScaler()
+    X_all_scaled = scaler.fit_transform(X_all.reshape(-1, 1)).reshape(X_all.shape)
+    y_all_scaled = scaler.transform(y_all.reshape(-1, 1)).reshape(y_all.shape)
+
+    # 80/20 train/val split BEFORE constructing tf.data datasets
+    val_size = max(1, int(len(X_all_scaled) * ENC_DEC_VAL_SPLIT))
+    split = len(X_all_scaled) - val_size
+    X_train_scaled, X_val_scaled = X_all_scaled[:split], X_all_scaled[split:]
+    y_train_scaled, y_val_scaled = y_all_scaled[:split], y_all_scaled[split:]
+
+    # tf.data input pipeline with shuffle / batch / prefetch
+    train_ds = (
+        tf.data.Dataset.from_tensor_slices((X_train_scaled, y_train_scaled))
+        .shuffle(buffer_size=max(1, len(X_train_scaled)), seed=42)
+        .batch(LSTM_BATCH_SIZE)
+        .prefetch(tf.data.AUTOTUNE)
+    )
+    val_ds = (
+        tf.data.Dataset.from_tensor_slices((X_val_scaled, y_val_scaled))
+        .batch(LSTM_BATCH_SIZE)
+        .prefetch(tf.data.AUTOTUNE)
+    )
+
+    model = build_encoder_decoder_model(
+        lookback=lookback,
+        horizon=horizon,
+        encoder_units=ENC_DEC_ENCODER_UNITS,
+        decoder_units=ENC_DEC_DECODER_UNITS,
+    )
+    print(f"Encoder-decoder LSTM built: {model.count_params():,} params")
+
+    # Ensure artifact directories exist
+    os.makedirs(TB_LOG_DIR, exist_ok=True)
+    os.makedirs(SAVED_MODEL_DIR, exist_ok=True)
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    tb_log_dir = os.path.join(TB_LOG_DIR, f'encoder_decoder_lstm_{timestamp}')
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, 'encoder_decoder_lstm_best.keras')
+
+    callbacks = [
+        EarlyStopping(
+            monitor='val_loss',
+            patience=EARLY_STOP_PATIENCE,
+            restore_best_weights=True,
+            verbose=1,
+        ),
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=ENC_DEC_LR_FACTOR,
+            patience=ENC_DEC_LR_PATIENCE,
+            min_lr=ENC_DEC_MIN_LR,
+            verbose=1,
+        ),
+        TensorBoard(log_dir=tb_log_dir),
+        ModelCheckpoint(
+            filepath=checkpoint_path,
+            save_best_only=True,
+            monitor='val_loss',
+            verbose=0,
+        ),
+    ]
+
+    history = model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=LSTM_EPOCHS,
+        callbacks=callbacks,
+        verbose=0,
+    )
+
+    # SavedModel export in Keras V3 format
+    saved_model_path = os.path.join(SAVED_MODEL_DIR, 'encoder_decoder_lstm.keras')
+    model.save(saved_model_path)
+    print(f"Saved encoder-decoder model to {saved_model_path}")
+
+    # Forecast the next `horizon` steps from the tail of the training data
+    last_window = train_values[-lookback:].reshape(1, lookback, 1).astype(np.float32)
+    last_window_scaled = scaler.transform(
+        last_window.reshape(-1, 1)
+    ).reshape(last_window.shape)
+    forecast_scaled = model.predict(last_window_scaled, verbose=0).flatten()
+    forecast = scaler.inverse_transform(forecast_scaled.reshape(-1, 1)).flatten()
+
+    predicted_series = pd.Series(forecast[:len(test)], index=test.index)
+    metrics = compute_metrics(test_values.flatten(), predicted_series.values)
+    print(
+        f"Encoder-Decoder LSTM - MAE: {metrics['mae']:.2f}, "
+        f"MAPE: {metrics['mape']:.4f}, RMSE: {metrics['rmse']:.2f}"
+    )
+
+    return {
+        'model': model,
+        'scaler': scaler,
+        'predictions': predicted_series,
+        'metrics': metrics,
+        'history': history.history,
     }
 
 

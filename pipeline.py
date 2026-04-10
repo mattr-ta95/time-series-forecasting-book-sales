@@ -22,6 +22,7 @@ from data_loader import aggregate_monthly, prepare_all_books
 from models import (
     compute_metrics,
     run_auto_arima,
+    run_encoder_decoder_lstm,
     run_lstm,
     run_monthly_arima,
     run_monthly_xgboost,
@@ -204,7 +205,22 @@ def run_all_models(book_name, train, test, book_df, display_name):
         plt.close()
         print(f"✓ Saved: {filepath}")
 
-    # 5. Sequential Hybrid
+    # 5. Encoder-Decoder LSTM with Attention (Functional API showcase)
+    print(f"\n--- Encoder-Decoder LSTM with Attention ({display_name}) ---")
+    enc_dec_result = run_encoder_decoder_lstm(train, test)
+    results['encoder_decoder_lstm'] = enc_dec_result['metrics']
+
+    plot_key = ('encoder_decoder', book_name)
+    if plot_key in PLOT_NAMES:
+        save_forecast_plot(
+            test, enc_dec_result['predictions'],
+            f'Encoder-Decoder LSTM (Attention) Forecast - {display_name}',
+            PLOT_NAMES[plot_key],
+        )
+    print(f"  MAE: {enc_dec_result['metrics']['mae']:.2f}, "
+          f"MAPE: {enc_dec_result['metrics']['mape']:.4f}")
+
+    # 6. Sequential Hybrid
     print(f"\n--- Sequential Hybrid ({display_name}) ---")
     seq_hybrid = run_sequential_hybrid(test, arima_result['model'])
     results['sequential_hybrid'] = seq_hybrid['metrics']
@@ -217,7 +233,7 @@ def run_all_models(book_name, train, test, book_df, display_name):
             PLOT_NAMES[plot_key],
         )
 
-    # 6. Parallel Hybrid
+    # 7. Parallel Hybrid
     print(f"\n--- Parallel Hybrid ({display_name}) ---")
     par_hybrid = run_parallel_hybrid(train, test, arima_result['model'])
     results['parallel_hybrid'] = par_hybrid['metrics']
@@ -230,7 +246,7 @@ def run_all_models(book_name, train, test, book_df, display_name):
             PLOT_NAMES[plot_key],
         )
 
-    # 7. Monthly XGBoost
+    # 8. Monthly XGBoost
     print(f"\n--- Monthly XGBoost ({display_name}) ---")
     monthly = aggregate_monthly(train)
     monthly_split = int(len(monthly) * MONTHLY_TRAIN_RATIO)
@@ -258,7 +274,7 @@ def run_all_models(book_name, train, test, book_df, display_name):
     print(f"  Monthly XGBoost MAE: {monthly_xgb['metrics']['mae']:.2f}, "
           f"MAPE: {monthly_xgb['metrics']['mape']:.4f}")
 
-    # 8. Monthly ARIMA
+    # 9. Monthly ARIMA
     print(f"\n--- Monthly ARIMA ({display_name}) ---")
     full_volume = book_df['Volume']
     full_monthly = full_volume.resample('MS').sum()

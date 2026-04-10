@@ -161,6 +161,7 @@ Weekly resampling with zero-filling, ISBN normalization, date indexing, filtered
 The deep learning components are the focus of this repo:
 
 - **Multi-step (32-week) LSTM forecasting** with 52-week lookback, StandardScaler, 2 × 50-unit stacked layers, dropout, and early stopping (see `models.py`)
+- **Encoder-decoder LSTM with attention** (`models.py:build_encoder_decoder_model`): Functional-API seq2seq model with a Keras `Attention` layer over encoder outputs, trained via a `tf.data` pipeline with `EarlyStopping`, `ReduceLROnPlateau`, `TensorBoard` logging, `ModelCheckpoint`, and Keras V3 SavedModel export
 - **Optuna hyperparameter search** over LSTM architecture (units, dropout, learning rate), 10 trials per book
 - **Sequential hybrid model**: Auto SARIMA base forecast with an LSTM trained on in-sample residuals, predicting residuals over the 32-week horizon
 - **Parallel hybrid model**: weighted ensemble of SARIMA and LSTM forecasts (default 0.7/0.3 split)

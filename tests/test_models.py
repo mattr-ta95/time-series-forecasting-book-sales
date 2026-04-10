@@ -6,8 +6,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 import pytest
+import tensorflow as tf
 
 from models import (
+    build_encoder_decoder_model,
     compute_metrics,
     create_hybrid_lstm_model,
     create_input_output_sequences_xgb,
@@ -98,3 +100,67 @@ class TestMetrics:
         predicted = np.array([1, 2, 3])  # shorter
         metrics = compute_metrics(actual, predicted)
         assert metrics['mae'] == 0.0  # first 3 match exactly
+
+
+class TestEncoderDecoderLSTM:
+    """Tests for the Functional-API encoder-decoder LSTM with attention."""
+
+    def test_encoder_decoder_architecture(self):
+        """Model has sane output shape, param budget, and encoder+decoder LSTMs."""
+        model = build_encoder_decoder_model(
+            lookback=52, horizon=32, encoder_units=64, decoder_units=64,
+        )
+        assert model.output_shape == (None, 32)
+        assert model.count_params() < 150_000, (
+            f"Model has {model.count_params()} params, expected <150K"
+        )
+
+        layer_names = [layer.name for layer in model.layers]
+        assert 'encoder_lstm' in layer_names, "expected an encoder LSTM layer"
+        assert 'decoder_lstm' in layer_names, "expected a decoder LSTM layer"
+
+        lstm_layers = [
+            layer for layer in model.layers if isinstance(layer, tf.keras.layers.LSTM)
+        ]
+        assert len(lstm_layers) >= 2, (
+            f"expected at least 2 LSTM layers (encoder+decoder), found {len(lstm_layers)}"
+        )
+
+    def test_encoder_decoder_uses_functional_api(self):
+        """Model must be built with the Functional API, not Sequential."""
+        model = build_encoder_decoder_model(
+            lookback=52, horizon=32, encoder_units=64, decoder_units=64,
+        )
+        assert isinstance(model, tf.keras.Model)
+        assert not isinstance(model, tf.keras.Sequential)
+
+    def test_encoder_decoder_has_attention(self):
+        """Model must contain a Keras Attention layer over encoder outputs."""
+        model = build_encoder_decoder_model(
+            lookback=52, horizon=32, encoder_units=64, decoder_units=64,
+        )
+        attention_layers = [
+            layer for layer in model.layers
+            if isinstance(
+                layer,
+                (tf.keras.layers.Attention, tf.keras.layers.AdditiveAttention),
+            )
+        ]
+        assert len(attention_layers) >= 1, (
+            "expected at least one Attention / AdditiveAttention layer"
+        )
+
+    def test_encoder_decoder_trains_one_step(self):
+        """Model fits one epoch on tiny synthetic data and produces a finite loss."""
+        rng = np.random.default_rng(0)
+        X = rng.standard_normal(size=(64, 52, 1)).astype(np.float32)
+        y = rng.standard_normal(size=(64, 32)).astype(np.float32)
+
+        model = build_encoder_decoder_model(
+            lookback=52, horizon=32, encoder_units=32, decoder_units=32,
+        )
+        history = model.fit(X, y, epochs=1, batch_size=16, verbose=0)
+
+        assert 'loss' in history.history
+        assert len(history.history['loss']) == 1
+        assert np.isfinite(history.history['loss'][0])

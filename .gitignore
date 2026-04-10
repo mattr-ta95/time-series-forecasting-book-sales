@@ -142,6 +142,9 @@ models/
 
 # Results and outputs
 results/
+results/tb_logs/
+results/saved_models/
+results/checkpoints/
 outputs/
 plots/
 *.png
